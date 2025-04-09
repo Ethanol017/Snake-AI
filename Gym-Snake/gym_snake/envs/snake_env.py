@@ -6,9 +6,18 @@ from gymnasium.utils import seeding
 from gym_snake.envs.snake import Controller, Discrete
 
 try:
+    import google.colab # type: ignore
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
+try:
     import matplotlib.pyplot as plt
     import matplotlib
-    matplotlib.use('TkAgg')
+    if IN_COLAB:
+        matplotlib.use('Agg')
+    else:
+        matplotlib.use('TkAgg')
+    matplotlib.use('Agg')
 except ImportError as e:
     raise error.DependencyNotInstalled("{}. (HINT: see matplotlib documentation for installation https://matplotlib.org/faq/installing_faq.html#installation".format(e))
 
@@ -50,15 +59,29 @@ class SnakeEnv(gym.Env):
         return self.last_obs,{}
 
     def render(self, mode='human', close=False, frame_speed=.1):
-        if self.viewer is None:
-            self.fig = plt.figure()
-            self.viewer = self.fig.add_subplot(111)
-            plt.ion()
-            self.fig.show()
-        self.viewer.clear()
-        self.viewer.imshow(self.last_obs)
-        plt.pause(frame_speed)
-        self.fig.canvas.draw()
+        if IN_COLAB:
+            from IPython.display import display, clear_output # type: ignore
+            if self.viewer is None:
+                self.fig = plt.figure(figsize=(8, 8))
+                self.viewer = self.fig.add_subplot(111)
+            
+                self.viewer.clear()
+                self.viewer.imshow(self.last_obs)
+                self.viewer.axis('off')
+                
+                clear_output(wait=True)
+                display(plt.gcf())
+        else:
+            if self.viewer is None:
+                self.fig = plt.figure()
+                self.viewer = self.fig.add_subplot(111)
+                plt.ion()
+                self.fig.show()
+            
+            self.viewer.clear()
+            self.viewer.imshow(self.last_obs)
+            plt.pause(frame_speed)
+            self.fig.canvas.draw()
 
     def seed(self, x):
         pass
