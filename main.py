@@ -20,8 +20,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=50, factor=0.5)
     recent_rewards = deque(maxlen=100)
+    replay_buffer = []
     for episode in range(1,episodes+1):
-        replay_buffer = []
         # play game
         state,_ = env.reset()
         state_tensor = torch.tensor(np.transpose(state, (2, 0, 1)),dtype=torch.float32).to(device)
@@ -35,7 +35,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
                 
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            reward_sum += reward.item()
+            reward_sum += reward
             next_state_tensor = torch.tensor(np.transpose(next_state, (2, 0, 1)),dtype=torch.float32).to(device)
 
             replay_buffer.append((
@@ -53,7 +53,6 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
             state_tensor = next_state_tensor
         
         recent_rewards.append(reward_sum)
-        
         if len(replay_buffer) >= batch_size:
             # --train--
             
@@ -110,21 +109,19 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
                 loss = policy_loss + c1 * value_loss - c2 * entropy
                 loss.backward()
                 optimizer.step()
+                # --log--
+                if epoch == epochs - 1:
+                    writer.add_scalar("loss/policy_loss", policy_loss.item(), episode)
+                    writer.add_scalar("loss/value_loss", value_loss.item(), episode)
+                    writer.add_scalar("loss/loss", loss.item(), episode)
+                    writer.add_scalar("reward", rewards.sum(), episode)
+                    writer.add_scalar("advantage", advantages.mean(), episode)
                 
+                if episode % save_interval == 0:
+                    print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
+                    torch.save(model.state_dict(), f"./models/snake_ppo_{episode}.pth")
         
         scheduler.step(np.mean(recent_rewards))
-        
-        # --log--
-        writer.add_scalar("loss/policy_loss", policy_loss.item(), episode)
-        writer.add_scalar("loss/value_loss", value_loss.item(), episode)
-        writer.add_scalar("loss/loss", loss.item(), episode)
-        writer.add_scalar("reward", rewards.sum(), episode)
-        writer.add_scalar("advantage", advantages.mean(), episode)
-            
-        if episode % save_interval == 0:
-            print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
-            torch.save(model.state_dict(), f"./model/snake_ppo_{episode}.pth")
-            
             
 def test(model,model_name,env,test_times=10,render=False):
     model.load_state_dict(torch.load(model_name,weights_only=True))
@@ -168,7 +165,7 @@ if __name__ == '__main__':
         c2=0.02,                
         save_interval=100
     )    
-    test(model=model,model_name='./model/snake_ppo_1300.pth',env=env,test_times=1,render=True)
+    test(model=model,model_name='./models/snake_ppo_1300.pth',env=env,test_times=1,render=True)
     env.close()
     
     
