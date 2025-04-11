@@ -116,10 +116,9 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
                     writer.add_scalar("loss/loss", loss.item(), episode)
                     writer.add_scalar("reward", rewards.sum(), episode)
                     writer.add_scalar("advantage", advantages.mean(), episode)
-                
-                if episode % save_interval == 0:
-                    print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
-                    torch.save(model.state_dict(), f"./models/snake_ppo_{episode}.pth")
+                    if episode % save_interval == 0:
+                        print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
+                        torch.save(model.state_dict(), f"./models/snake_ppo_{episode}.pth")
         
         scheduler.step(np.mean(recent_rewards))
             
