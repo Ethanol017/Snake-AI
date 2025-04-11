@@ -17,7 +17,6 @@ try:
         matplotlib.use('Agg')
     else:
         matplotlib.use('TkAgg')
-    matplotlib.use('Agg')
 except ImportError as e:
     raise error.DependencyNotInstalled("{}. (HINT: see matplotlib documentation for installation https://matplotlib.org/faq/installing_faq.html#installation".format(e))
 

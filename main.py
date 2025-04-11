@@ -123,7 +123,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,epsi
         scheduler.step(np.mean(recent_rewards))
             
 def test(model,model_name,env,test_times=10,render=False):
-    model.load_state_dict(torch.load(model_name,weights_only=True))
+    model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
     for i in range(test_times):
         state, _ = env.reset()
         state = np.transpose(state, (2, 0, 1))

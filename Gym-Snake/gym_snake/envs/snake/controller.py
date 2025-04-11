@@ -143,7 +143,7 @@ class Controller():
             # reward
             reward = self.move_result(direction, i)
             if reward != -1:
-                reward += 0.1 * (self.current_distance - self.prev_distance)
+                reward += 0.1 * (self.prev_distance - self.current_distance)
                 reward += 0.01 * (0.99**self.steps_without_food)
             rewards.append(reward)
             
