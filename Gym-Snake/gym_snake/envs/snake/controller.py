@@ -34,10 +34,13 @@ class Controller():
                 self.grid.place_food(start_coord)
         else:
             for i in range(n_foods):
-                self.grid.new_food()
+                self.food_coord = self.grid.new_food()
 
         self.step_limit = step_limit
-        self.step_num = 0
+        self.steps_without_food = 0
+        
+        self.prev_distance = abs(start_coord[0]-self.food_coord[0]) + abs(start_coord[1]-self.food_coord[1])
+        self.current_distance = self.prev_distance
 
     def move_snake(self, direction, snake_idx):
         """
@@ -78,13 +81,14 @@ class Controller():
             reward = -1
         # Check for reward
         elif self.grid.food_space(snake.head):
+            self.steps_without_food = 0
             self.grid.draw(snake.body[0], self.grid.BODY_COLOR)  # Redraw tail
             self.grid.connect(
                 snake.body[0], snake.body[1], self.grid.BODY_COLOR)
             # Avoid miscount of grid.open_space
             self.grid.cover(snake.head, snake.head_color)
-            reward = 1
-            self.grid.new_food()
+            reward = 2
+            self.food_coord = self.grid.new_food()
         else:
             reward = 0
             empty_coord = snake.body.popleft()
@@ -115,8 +119,8 @@ class Controller():
         directions - tuple, list, or ndarray of directions corresponding to each snake.
         """
         # print(directions)
-        self.step_num += 1
-        truncated = self.step_num >= self.step_limit
+        self.steps_without_food += 1
+        truncated = self.steps_without_food >= self.step_limit
 
         # Ensure no more play until reset
         if self.snakes_remaining < 1 or self.grid.open_space < 1:
@@ -133,7 +137,17 @@ class Controller():
             if not truncated and self.snakes[i] is None and self.dead_snakes[i] is not None:
                 self.kill_snake(i)
             self.move_snake(direction, i)
-            rewards.append(self.move_result(direction, i))
+            if type(self.snakes[i]) != type(None):
+                self.current_distance = abs(self.snakes[i].head[0]-self.food_coord[0]) + abs(self.snakes[i].head[1]-self.food_coord[1])
+            
+            # reward
+            reward = self.move_result(direction, i)
+            if reward != -1:
+                reward += 0.1 * (self.current_distance - self.prev_distance)
+                reward += 0.01 * (0.99**self.steps_without_food)
+            rewards.append(reward)
+            
+            self.prev_distance = self.current_distance    
 
         terminated = self.snakes_remaining < 1 or self.grid.open_space < 1
 

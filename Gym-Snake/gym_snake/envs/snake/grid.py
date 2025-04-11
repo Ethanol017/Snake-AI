@@ -231,7 +231,7 @@ class Grid():
             if np.array_equal(self.color_of(coord), self.SPACE_COLOR):
                 coord_not_found = False
         self.draw(coord, self.FOOD_COLOR)
-        return True
+        return coord
 
     def off_grid(self, coord):
         """
