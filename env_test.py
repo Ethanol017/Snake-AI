@@ -26,11 +26,19 @@ env = gym.make("snake-v0")
 state, _ = env.reset()
 old_reward = -100
 while True:
-    action = env.action_space.sample()
+    # action = env.action_space.sample()
+    # 0: up
+    # 1: right
+    # 2: down
+    # 3: left
+    action = int(input())
     next_state, reward, terminated, truncated, _ = env.step(action)
-    if reward != old_reward:
-        print("reward", reward)
-        old_reward = reward
+    cell_size = 10
+    print(next_state[cell_size//2::cell_size, cell_size//2::cell_size, :])
+    # if reward != old_reward:
+    #     print("reward", reward)
+    #     old_reward = reward
+    print(terminated,truncated,reward)
     if terminated or truncated:
         break
     state = next_state
