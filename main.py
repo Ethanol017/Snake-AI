@@ -9,10 +9,7 @@ from model import SnakePPO
 from torch.optim.lr_scheduler import StepLR
 import gym_snake # type: ignore
 
-from torch.utils.tensorboard import SummaryWriter
-current_time = time.strftime('%Y%m%d_%H%M%S')
-log_dir = os.path.join("logs", f"snake_ppo_{current_time}")
-writer = SummaryWriter(log_dir=log_dir)
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -20,7 +17,11 @@ def fast_downsample(observation, cell_size=10):
     result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
     return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,exploration_decay_rate ,c1=0.5,c2=0.01,save_interval=100):
+def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,exploration_decay_rate ,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+    from torch.utils.tensorboard import SummaryWriter
+    current_time = time.strftime('%Y%m%d_%H%M%S')
+    log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
+    writer = SummaryWriter(log_dir=log_dir)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = StepLR(optimizer, step_size=500, gamma=0.9)
@@ -150,7 +151,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
 
                     if episode % save_interval == 0:
                         print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
-                        torch.save(model.state_dict(), f"./models/snake_ppo_{episode}.pth")
+                        torch.save(model.state_dict(), f"{save_dir}/snake_ppo_{episode}.pth")
         
             scheduler.step()
             
@@ -195,7 +196,9 @@ if __name__ == '__main__':
         exploration_decay_rate = 2,
         c1=0.3,                 
         c2=0.01,                
-        save_interval=1000
+        save_interval=1000,
+        save_dir = './models/',
+        log_dir = './logs/'
     )    
     test(model=model,model_name='./models/snake_ppo_300.pth',env=env,test_times=10,render=True)
     env.close()
