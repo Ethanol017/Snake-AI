@@ -67,7 +67,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 state_tensor = next_state_tensor
         
         trajectory_buffer.append(replay_buffer)  #trajectory_buffer= [ [game_repaly] , [game_repaly] , [game_repaly], ... X N] ]
-
+        writer.add_scalar("snake_size", log_snake_size , episode)
+        
         if len(trajectory_buffer) >= batch_size:
             # --train--
             batch = []
@@ -150,7 +151,6 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                     writer.add_scalar("loss/value_loss", value_loss.item(), episode)
                     writer.add_scalar("loss/loss", loss.item(), episode)
                     writer.add_scalar("reward", log_snake_reward , episode)
-                    writer.add_scalar("snake_size", log_snake_size , episode)
 
                     if episode % save_interval == 0:
                         print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
@@ -168,8 +168,9 @@ def test(model,model_name,env,test_times=10,render=False):
         while True:
             action_prob, _ = model(state_tensor)
             action = action_prob.argmax().item()
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            print(reward)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            # print(reward)
+            print(info["snake_size"])
             reward_sum += reward
             state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
             if render:
@@ -197,6 +198,7 @@ if __name__ == '__main__':
         lr=1e-4,                
         clip_ppo=0.1,     
         exploration_decay_rate = 2,
+        lr_gamma = 0.9,
         c1=0.3,                 
         c2=0.01,                
         save_interval=1000,
