@@ -156,7 +156,7 @@ class Controller():
                 reward += len(self.snakes[i].body) * 0.5
             elif reward != -5:
                 dis = (self.prev_distance - self.current_distance)
-                reward += 0.2 if dis > 0 else -0.1
+                reward += 0.1 * dis
                 reward -= 0.01 * (1.01**self.steps_without_food)
             rewards.append(reward)
 
@@ -165,7 +165,10 @@ class Controller():
         terminated = self.snakes_remaining < 1 or self.grid.open_space < 1
 
         # done = self.snakes_remaining < 1 or self.grid.open_space < 1
+        snake_size = 0
+        if type(self.snakes[i]) != type(None):
+            snake_size = len(self.snakes[0].body)+1
         if len(rewards) == 1:
-            return self.grid.grid.copy(), rewards[0], terminated, truncated, {"snakes_remaining": self.snakes_remaining}
+            return self.grid.grid.copy(), rewards[0], terminated, truncated, {"snakes_remaining": self.snakes_remaining,"snake_size": snake_size}
         else:
             return self.grid.grid.copy(), rewards, terminated, truncated, {"snakes_remaining": self.snakes_remaining}

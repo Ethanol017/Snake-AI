@@ -17,14 +17,14 @@ def fast_downsample(observation, cell_size=10):
     result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
     return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,exploration_decay_rate ,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,exploration_decay_rate,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
     from torch.utils.tensorboard import SummaryWriter
     current_time = time.strftime('%Y%m%d_%H%M%S')
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
     writer = SummaryWriter(log_dir=log_dir)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = StepLR(optimizer, step_size=500, gamma=0.9)
+    scheduler = StepLR(optimizer, step_size=500, gamma=lr_gamma)
     trajectory_buffer = deque(maxlen=buffer_size)
     for episode in range(1,episodes+1):
         # play game
@@ -34,7 +34,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
         done = False
         reward_sum = 0
         replay_buffer = []
-        log_play_reward = 0
+        log_snake_reward = 0
+        log_snake_size = 0
         while not done:
             with torch.no_grad():
                 action_prob, state_value = model(state_tensor.unsqueeze(0))
@@ -48,11 +49,12 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                     action = dist.sample()
                 log_prob = dist.log_prob(action)
                 
-                next_state, reward, terminated, truncated, _ = env.step(action)
+                next_state, reward, terminated, truncated, info = env.step(action)
+                log_snake_size = info['snake_size']
                 done = terminated or truncated
                 reward_sum += reward
                 next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
-                log_play_reward += reward
+                log_snake_reward += reward
                 replay_buffer.append([
                     state_tensor.detach().cpu(), # tensor
                     next_state_tensor.detach().cpu(), # tensor
@@ -147,7 +149,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                     writer.add_scalar("loss/policy_loss", policy_loss.item(), episode)
                     writer.add_scalar("loss/value_loss", value_loss.item(), episode)
                     writer.add_scalar("loss/loss", loss.item(), episode)
-                    writer.add_scalar("reward", log_play_reward , episode)
+                    writer.add_scalar("reward", log_snake_reward , episode)
+                    writer.add_scalar("snake_size", log_snake_size , episode)
 
                     if episode % save_interval == 0:
                         print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
