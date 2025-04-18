@@ -14,7 +14,7 @@ class SnakePPO(nn.Module):
         self.bn2 = nn.BatchNorm2d(32)
         
 
-        self.fc1 = nn.Linear(32 * 3 * 3, 128)  # 32 * 3 * 3 = 288，遠小於之前的參數量
+        self.fc1 = nn.Linear(32 * 3 * 3, 128)  
         self.fc2 = nn.Linear(128, 64)
         
         self.policy_head = nn.Linear(64, 4)

@@ -17,7 +17,7 @@ def fast_downsample(observation, cell_size=10):
     result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
     return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,exploration_decay_rate,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
     from torch.utils.tensorboard import SummaryWriter
     current_time = time.strftime('%Y%m%d_%H%M%S')
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
@@ -41,16 +41,11 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 action_prob, state_value = model(state_tensor.unsqueeze(0))
                 dist = torch.distributions.Categorical(action_prob)
 
-                exploration_prob = max(0.05, 0.5 * math.exp(-exploration_decay_rate * episode / episodes))
-
-                if random.random() < exploration_prob:
-                    action = torch.randint(0, 4, (1,)).to(device)
-                else:
-                    action = dist.sample()
+                action = dist.sample()
                 log_prob = dist.log_prob(action)
                 
                 next_state, reward, terminated, truncated, info = env.step(action)
-                log_snake_size = info['snake_size']
+                log_snake_size = info['snake_size'] if info['snake_size'] is not None else 0
                 done = terminated or truncated
                 reward_sum += reward
                 next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
@@ -100,19 +95,15 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 _, next_values = model(next_states)
                 next_values = next_values.squeeze(-1)
                 next_values = next_values * (1 - dones)
-                
+                old_values_squeezed = old_values.squeeze(-1)
                 for seg_idx in range(batch_size // segment_length):
                     start = seg_idx * segment_length
                     end = (seg_idx + 1) * segment_length
 
                     last_gae  = 0
                     for t in reversed(range(start, end)):
-                        if t == end - 1 or dones[t]:
-                            next_value = 0
-                        else:
-                            next_value = next_values[t].item()
-                            
-                        delta = rewards[t] + gamma * next_value - old_values[t].item()
+
+                        delta = rewards[t] + gamma * next_values[t].item() - old_values_squeezed[t]
                         
                         last_gae = delta + gamma * lambda_ * (1 - dones[t]) * last_gae
                         advantages[t] = last_gae
@@ -120,7 +111,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 mask = (dones != 1)
                 valid_adv = advantages[mask]
                 advantages[mask] = (valid_adv - valid_adv.mean()) / (valid_adv.std() + 1e-8)
-                returns = advantages + old_values.squeeze(-1)
+                returns = advantages + old_values_squeezed
 
             
             for epoch in range(epochs):
@@ -137,8 +128,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # compute value loss
-                value_loss = ((current_values - returns) ** 2).mean()
-                
+                value_loss = ((current_values.squeeze(-1) - returns) ** 2).mean()
                 # update model
                 optimizer.zero_grad()
                 loss = policy_loss + c1 * value_loss - c2 * entropy
@@ -170,7 +160,7 @@ def test(model,model_name,env,test_times=10,render=False):
             action = action_prob.argmax().item()
             next_state, reward, terminated, truncated, info = env.step(action)
             # print(reward)
-            print(info["snake_size"])
+            # print(info["snake_size"])
             reward_sum += reward
             state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
             if render:
@@ -189,22 +179,21 @@ if __name__ == '__main__':
         model=model,
         env=env,
         episodes = 20000,          
-        epochs=10,
+        epochs=5,
         buffer_size=2048,               
         batch_size=512,    
         segment_length = 128,     
         gamma=0.99,             
-        lambda_=0.9,           
-        lr=1e-4,                
-        clip_ppo=0.1,     
-        exploration_decay_rate = 2,
-        lr_gamma = 0.9,
-        c1=0.3,                 
+        lambda_=0.95,           
+        lr=3e-4,                
+        clip_ppo=0.2,     
+        c1=0.5,                 
         c2=0.01,                
         save_interval=1000,
+        lr_gamma=0.99,
         save_dir = './models/',
         log_dir = './logs/'
-    )    
+    )
     test(model=model,model_name='./models/snake_ppo_300.pth',env=env,test_times=10,render=True)
     env.close()
     
