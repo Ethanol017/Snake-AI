@@ -4,6 +4,7 @@ import os
 import random
 import time
 import gymnasium as gym
+import numpy as np
 import torch
 from model import SnakePPO
 from torch.optim.lr_scheduler import StepLR
@@ -17,7 +18,7 @@ def fast_downsample(observation, cell_size=10):
     result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
     return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gamma,lambda_,clip_ppo,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip_ppo,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
     from torch.utils.tensorboard import SummaryWriter
     current_time = time.strftime('%Y%m%d_%H%M%S')
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
@@ -25,18 +26,27 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = StepLR(optimizer, step_size=500, gamma=lr_gamma)
-    trajectory_buffer = deque(maxlen=buffer_size)
-    for episode in range(1,episodes+1):
+    
+    buffer_actions = []
+    buffer_rewards = []
+    buffer_dones = []
+    buffer_log_probs = []
+    buffer_values = []
+    buffer_states = []
+    
+    episode_count = 0
+    while episode_count < episodes:
         # play game
         state,_ = env.reset()
         state = fast_downsample(state)
         state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
         done = False
         reward_sum = 0
-        replay_buffer = []
+        
         log_snake_reward = 0
         log_snake_size = 0
-        while not done:
+        
+        for step in range(buffer_size):
             with torch.no_grad():
                 action_prob, state_value = model(state_tensor.unsqueeze(0))
                 dist = torch.distributions.Categorical(action_prob)
@@ -45,108 +55,117 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,segment_length,lr,gam
                 log_prob = dist.log_prob(action)
                 
                 next_state, reward, terminated, truncated, info = env.step(action)
-                log_snake_size = info['snake_size'] if info['snake_size'] is not None else 0
+                if info['snake_size'] > 0:
+                    log_snake_size = info['snake_size']
                 done = terminated or truncated
                 reward_sum += reward
                 next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
                 log_snake_reward += reward
-                replay_buffer.append([
-                    state_tensor.detach().cpu(), # tensor
-                    next_state_tensor.detach().cpu(), # tensor
-                    action.detach().cpu(), # tensor
-                    log_prob.detach().cpu(), # tensor
-                    reward, # float
-                    state_value.squeeze(0).detach().cpu(), # tensor
-                    done # bool
-                ])
+                
+                buffer_states.append(state_tensor.detach().cpu())
+                buffer_actions.append(action.detach().cpu())
+                buffer_rewards.append(reward)
+                buffer_dones.append(done)
+                buffer_log_probs.append(log_prob.detach().cpu())
+                buffer_values.append(state_value.squeeze().detach().cpu())
+                
                 state_tensor = next_state_tensor
-        
-        trajectory_buffer.append(replay_buffer)  #trajectory_buffer= [ [game_repaly] , [game_repaly] , [game_repaly], ... X N] ]
-        writer.add_scalar("snake_size", log_snake_size , episode)
-        
-        if len(trajectory_buffer) >= batch_size:
-            # --train--
-            batch = []
-            for i in range(batch_size//segment_length):
-                ep = random.choice(trajectory_buffer)
-                if len(ep) < segment_length:
-                    pad_len = segment_length - len(ep)
-                    last = ep[-1]
-                    pad = [(last[0], last[1], torch.tensor([0]), torch.tensor([0]) ,0.0, torch.tensor([0]), torch.tensor(1.0))] * pad_len
-                    batch.extend( ep+pad )
-                else:
-                    start_idx = random.randint(0, len(ep) - segment_length)
-                    segment = ep[start_idx:start_idx + segment_length]
-                    batch.extend(segment)
-
-            #batch = [ [segment_length] , [segment_length] , ... X (batch_size//segment_length) ]
-            states = torch.stack([t[0] for t in batch]).to(device)
-            next_states = torch.stack([t[1] for t in batch]).to(device)
-            actions = torch.stack([t[2] for t in batch]).to(device)
-            old_log_probs = torch.stack([t[3] for t in batch]).to(device)
-            rewards = torch.tensor([t[4] for t in batch],dtype=float).to(device)
-            old_values = torch.tensor([t[5] for t in batch]).to(device)
-            dones = torch.tensor([t[6] for t in batch],dtype=float).to(device)
+                
+                if done:            
+                    state, _ = env.reset()
+                    state = fast_downsample(state)
+                    state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
+                    log_snake_reward = 0
+                    log_snake_size = 0 
+                    if episode_count >= episodes: 
+                        break 
+  
+        # --train--
+        if episode_count < episodes:
+            episode_count += 1
             # compute_advantages
-            advantages = torch.zeros_like(rewards)
-            
+            advantages = torch.zeros(buffer_size).to(device)
             with torch.no_grad():
-                # print(next_states.shape)
-                _, next_values = model(next_states)
-                next_values = next_values.squeeze(-1)
-                next_values = next_values * (1 - dones)
-                old_values_squeezed = old_values.squeeze(-1)
-                for seg_idx in range(batch_size // segment_length):
-                    start = seg_idx * segment_length
-                    end = (seg_idx + 1) * segment_length
-
-                    last_gae  = 0
-                    for t in reversed(range(start, end)):
-
-                        delta = rewards[t] + gamma * next_values[t].item() - old_values_squeezed[t]
-                        
-                        last_gae = delta + gamma * lambda_ * (1 - dones[t]) * last_gae
-                        advantages[t] = last_gae
-                
-                mask = (dones != 1)
-                valid_adv = advantages[mask]
-                advantages[mask] = (valid_adv - valid_adv.mean()) / (valid_adv.std() + 1e-8)
-                returns = advantages + old_values_squeezed
-
+                _ , last_value = model(state_tensor.unsqueeze(0))
+                last_value = last_value.squeeze(-1)
             
+            last_adv = 0
+            for t in reversed(range(buffer_size)):
+                if t == buffer_size - 1:
+                    next_value = last_value
+                else:
+                    next_value = buffer_values[t + 1]
+                
+                delta = buffer_rewards[t] + gamma * next_value * (1 - int(buffer_dones[t])) - buffer_values[t]
+                last_adv = delta + gamma * lambda_ * (1 - int(buffer_dones[t])) * last_adv
+                advantages[t] = last_adv
+            returns = advantages + torch.stack(buffer_values)
+            
+            
+            b_states = torch.stack(buffer_states).to(device)
+            b_actions = torch.stack(buffer_actions).squeeze().to(device)
+            b_log_probs = torch.stack(buffer_log_probs).squeeze().to(device)
+            b_advantages = advantages.to(device)
+            b_returns = returns.to(device)
+            
+            b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
+            
+            indices = np.arange(buffer_size)
             for epoch in range(epochs):
-                # compute ratio
-                new_action_probs, current_values = model(states)
-                dist = torch.distributions.Categorical(new_action_probs)
-                new_log_probs = dist.log_prob(actions.squeeze(-1))
-                entropy = dist.entropy().mean()
-                
-                ratio = (new_log_probs - old_log_probs.squeeze(-1)).exp()
-                # compute surrogate loss
-                surr1 = ratio * advantages
-                surr2 = torch.clamp(ratio, 1 - clip_ppo, 1 + clip_ppo) * advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
-                
-                # compute value loss
-                value_loss = ((current_values.squeeze(-1) - returns) ** 2).mean()
-                # update model
-                optimizer.zero_grad()
-                loss = policy_loss + c1 * value_loss - c2 * entropy
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-                optimizer.step()
-                # --log--
-                if epoch == epochs - 1:
-                    writer.add_scalar("loss/policy_loss", policy_loss.item(), episode)
-                    writer.add_scalar("loss/value_loss", value_loss.item(), episode)
-                    writer.add_scalar("loss/loss", loss.item(), episode)
-                    writer.add_scalar("reward", log_snake_reward , episode)
+                np.random.shuffle(indices)
+                for start in range(0, buffer_size, batch_size):
+                    mb_indices = indices[start : start + batch_size]
 
-                    if episode % save_interval == 0:
-                        print(f"Episode {episode}/{episodes}, Loss: {loss.item()}, Reward: {rewards.sum().item()}")
-                        torch.save(model.state_dict(), f"{save_dir}/snake_ppo_{episode}.pth")
-        
+                    mb_states = b_states[mb_indices]
+                    mb_actions = b_actions[mb_indices]
+                    mb_old_log_probs = b_log_probs[mb_indices]
+                    mb_advantages = b_advantages[mb_indices]
+                    mb_returns = b_returns[mb_indices]
+
+                    new_action_probs, current_values = model(mb_states)
+                    dist = torch.distributions.Categorical(new_action_probs)
+                    new_log_probs = dist.log_prob(mb_actions)
+                    entropy = dist.entropy().mean()
+
+                    ratio = (new_log_probs - mb_old_log_probs).exp()
+
+                    # Policy Loss
+                    surr1 = ratio * mb_advantages
+                    surr2 = torch.clamp(ratio, 1 - clip_ppo, 1 + clip_ppo) * mb_advantages
+                    policy_loss = -torch.min(surr1, surr2).mean()
+
+                    # Value Loss
+                    current_values = current_values.squeeze()
+                    value_loss = ((current_values - mb_returns) ** 2).mean()
+
+                    # Total Loss
+                    loss = policy_loss + c1 * value_loss - c2 * entropy
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                    optimizer.step()
             scheduler.step()
+            
+            writer.add_scalar("loss/policy_loss", policy_loss.item(), episode_count)
+            writer.add_scalar("loss/value_loss", value_loss.item(), episode_count)
+            writer.add_scalar("loss/entropy", entropy.item(), episode_count)
+            writer.add_scalar("loss/loss", loss.item(), episode_count)
+            writer.add_scalar("learning_rate", scheduler.get_last_lr()[0], episode_count)
+            writer.add_scalar("reward", log_snake_reward, episode_count)
+            writer.add_scalar("snake_size", log_snake_size, episode_count)
+            print(f"Episode {episode_count}/{episodes}, Last_Reward: {log_snake_reward:.2f}, Last_Size: {log_snake_size}")
+        
+        buffer_states.clear()
+        buffer_actions.clear()
+        buffer_rewards.clear()
+        buffer_dones.clear()
+        buffer_log_probs.clear()
+        buffer_values.clear()
+
+        if episode_count > 0 and episode_count % save_interval == 0:
+            save_path = os.path.join(save_dir, f"snake_ppo_ep{episode_count}.pth")
+            torch.save(model.state_dict(), save_path)
             
 def test(model,model_name,env,test_times=10,render=False):
     model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
@@ -181,8 +200,7 @@ if __name__ == '__main__':
         episodes = 20000,          
         epochs=5,
         buffer_size=2048,               
-        batch_size=512,    
-        segment_length = 128,     
+        batch_size=512,        
         gamma=0.99,             
         lambda_=0.95,           
         lr=3e-4,                
