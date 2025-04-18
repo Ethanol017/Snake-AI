@@ -84,7 +84,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
         if episode_count < episodes:
             episode_count += 1
             # compute_advantages
-            advantages = torch.zeros(buffer_size).to(device)
+            b_advantages = torch.zeros(buffer_size).to(device)
             with torch.no_grad():
                 _ , last_value = model(state_tensor.unsqueeze(0))
                 last_value = last_value.squeeze(-1)
@@ -98,15 +98,13 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                 
                 delta = buffer_rewards[t] + gamma * next_value * (1 - int(buffer_dones[t])) - buffer_values[t]
                 last_adv = delta + gamma * lambda_ * (1 - int(buffer_dones[t])) * last_adv
-                advantages[t] = last_adv
-            returns = advantages + torch.stack(buffer_values)
+                b_advantages[t] = last_adv
+            b_returns = b_advantages + torch.stack(buffer_values).to(device)
             
             
             b_states = torch.stack(buffer_states).to(device)
             b_actions = torch.stack(buffer_actions).squeeze().to(device)
             b_log_probs = torch.stack(buffer_log_probs).squeeze().to(device)
-            b_advantages = advantages.to(device)
-            b_returns = returns.to(device)
             
             b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
             
