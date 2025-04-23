@@ -1,13 +1,11 @@
-from collections import deque
-import math
 import os
-import random
 import time
 import gymnasium as gym
 import numpy as np
 import torch
 from model import SnakePPO
 from torch.optim.lr_scheduler import StepLR
+import torch.nn.functional as F
 import gym_snake # type: ignore
 
 
@@ -33,7 +31,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
     buffer_log_probs = []
     buffer_values = []
     buffer_states = []
-    
+    play_count = 0
     episode_count = 0
     while episode_count < episodes:
         # play game
@@ -42,9 +40,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
         state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
         done = False
         reward_sum = 0
-        
-        log_snake_reward = 0
-        log_snake_size = 0
+        snake_size = 0
         
         for step in range(buffer_size):
             with torch.no_grad():
@@ -55,12 +51,10 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                 log_prob = dist.log_prob(action)
                 
                 next_state, reward, terminated, truncated, info = env.step(action)
-                if info['snake_size'] > 0:
-                    log_snake_size = info['snake_size']
+                snake_size = info['snake_size']
                 done = terminated or truncated
                 reward_sum += reward
                 next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
-                log_snake_reward += reward
                 
                 buffer_states.append(state_tensor.detach().cpu())
                 buffer_actions.append(action.detach().cpu())
@@ -75,8 +69,11 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                     state, _ = env.reset()
                     state = fast_downsample(state)
                     state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
-                    log_snake_reward = 0
-                    log_snake_size = 0 
+                    writer.add_scalar("gameplay/reward", reward_sum, play_count)
+                    writer.add_scalar("gameplay/snake_size", snake_size, play_count)
+                    reward_sum = 0
+                    snake_size = 0
+                    play_count += 1
                     if episode_count >= episodes: 
                         break 
   
@@ -108,6 +105,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
             
             b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
             
+            # print(f"b_advantages: {b_advantages.shape}")
+            
             indices = np.arange(buffer_size)
             for epoch in range(epochs):
                 np.random.shuffle(indices)
@@ -134,8 +133,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
 
                     # Value Loss
                     current_values = current_values.squeeze()
-                    value_loss = ((current_values - mb_returns) ** 2).mean()
-
+                    value_loss = F.mse_loss(current_values, mb_returns)
                     # Total Loss
                     loss = policy_loss + c1 * value_loss - c2 * entropy
 
@@ -150,9 +148,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
             writer.add_scalar("loss/entropy", entropy.item(), episode_count)
             writer.add_scalar("loss/loss", loss.item(), episode_count)
             writer.add_scalar("learning_rate", scheduler.get_last_lr()[0], episode_count)
-            writer.add_scalar("reward", log_snake_reward, episode_count)
-            writer.add_scalar("snake_size", log_snake_size, episode_count)
-            print(f"Episode {episode_count}/{episodes}, Last_Reward: {log_snake_reward:.2f}, Last_Size: {log_snake_size}")
+            print(f"Episode {episode_count}/{episodes} , PlayCount {play_count}")
         
         buffer_states.clear()
         buffer_actions.clear()
@@ -167,6 +163,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
             
 def test(model,model_name,env,test_times=10,render=False):
     model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
+    model.eval()
     for i in range(test_times):
         state, _ = env.reset()
         state_tensor = torch.from_numpy(fast_downsample(state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
@@ -195,16 +192,16 @@ if __name__ == '__main__':
     train(
         model=model,
         env=env,
-        episodes = 20000,          
-        epochs=5,
-        buffer_size=2048,               
-        batch_size=512,        
-        gamma=0.99,             
-        lambda_=0.95,           
-        lr=3e-4,                
-        clip_ppo=0.2,     
-        c1=0.5,                 
-        c2=0.01,                
+        episodes = 20000,
+        epochs=10,
+        buffer_size=1024,
+        batch_size=128,
+        gamma=0.99,
+        lambda_=0.95,
+        lr=5e-4,
+        clip_ppo=0.2,
+        c1=0.5,
+        c2=0.02,
         save_interval=1000,
         lr_gamma=0.99,
         save_dir = './models/',

@@ -1,3 +1,4 @@
+import math
 from gym_snake.envs.snake import Snake
 from gym_snake.envs.snake import Grid
 import numpy as np
@@ -8,7 +9,7 @@ class Controller():
     This class combines the Snake, Food, and Grid classes to handle the game logic.
     """
 
-    def __init__(self, grid_size=[30, 30], unit_size=10, unit_gap=1, snake_size=3, n_snakes=1, n_foods=1, random_init=True, step_limit=150):
+    def __init__(self, grid_size=[30, 30], unit_size=10, unit_gap=1, snake_size=3, n_snakes=1, n_foods=1, random_init=True, step_limit=500):
 
         assert n_snakes < grid_size[0]//3
         assert n_snakes < 25
@@ -21,10 +22,12 @@ class Controller():
         self.snakes = []
         self.dead_snakes = []
         self.snake_sizes = []
+        self.grid_size = (grid_size[0]*grid_size[1])
+        self.max_growth =  self.grid_size- snake_size
         for i in range(1, n_snakes+1):
             start_coord = [i*grid_size[0]//(n_snakes+1), snake_size+1]
             self.snakes.append(Snake(start_coord, snake_size))
-            # self.snake_sizes[i] = self
+            self.snake_sizes.append(len(self.snakes[-1].body))
             color = [self.grid.HEAD_COLOR[0], i*10, 0]
             self.snakes[-1].head_color = color
             self.grid.draw_snake(self.snakes[-1], color)
@@ -73,7 +76,9 @@ class Controller():
             return 0
 
         # Check for death of snake
-        if self.grid.check_death(snake.head):
+        truncated = self.steps_without_food >= self.step_limit
+        # print(self.steps_without_food)
+        if self.grid.check_death(snake.head) or truncated:
             self.dead_snakes[snake_idx] = self.snakes[snake_idx]
             self.snakes[snake_idx] = None
             # Avoid miscount of grid.open_space
@@ -81,7 +86,7 @@ class Controller():
             self.grid.connect(snake.body.popleft(),
                               snake.body[0], self.grid.SPACE_COLOR)
             self.kill_snake(snake_idx)
-            reward = -10
+            reward = - math.pow(self.max_growth, (self.grid_size - self.snake_sizes[snake_idx]) / self.max_growth) * 0.1
             return reward
         # Check for reward
         elif self.grid.food_space(snake.head):
@@ -91,15 +96,17 @@ class Controller():
                 snake.body[0], snake.body[1], self.grid.BODY_COLOR)
             # Avoid miscount of grid.open_space
             self.grid.cover(snake.head, snake.head_color)
-            reward = 10
+            reward = self.snake_sizes[snake_idx] / self.grid_size
+            self.snake_sizes[snake_idx] += 1
             self.food_coord = self.grid.new_food()
-            self.step_limit *= 1.1
+            self.current_distance = abs(self.snakes[snake_idx].head[0]-self.food_coord[0]) + abs(self.snakes[snake_idx].head[1]-self.food_coord[1])
         else:
-            reward = 0
             empty_coord = snake.body.popleft()
             self.grid.connect(
                 empty_coord, snake.body[0], self.grid.SPACE_COLOR)
             self.grid.draw(snake.head, snake.head_color)
+            dis = (self.prev_distance - self.current_distance)
+            reward = (dis / self.snake_sizes[snake_idx])*0.1
 
         self.grid.connect(snake.body[-1], snake.head, self.grid.BODY_COLOR)
 
@@ -125,17 +132,17 @@ class Controller():
         """
         # print(directions)
         self.steps_without_food += 1
-        truncated = self.steps_without_food >= self.step_limit
+        
 
-        # Ensure no more play until reset
-        if self.snakes_remaining < 1 or self.grid.open_space < 1:
-            if isinstance(directions, (int, np.integer)) or len(directions) == 1:
-                return self.grid.grid.copy(), 0, True, truncated, {"snakes_remaining": self.snakes_remaining}
-            else:
-                return self.grid.grid.copy(), [0]*len(directions), True, truncated, {"snakes_remaining": self.snakes_remaining}
+        # # Ensure no more play until reset
+        # if self.snakes_remaining < 1 or self.grid.open_space < 1:
+        #     if isinstance(directions, (int, np.integer)) or len(directions) == 1:
+        #         return self.grid.grid.copy(), 0, True, truncated, {"snakes_remaining": self.snakes_remaining}
+        #     else:
+        #         return self.grid.grid.copy(), [0]*len(directions), True, truncated, {"snakes_remaining": self.snakes_remaining}
 
         rewards = []
-
+        truncated = self.steps_without_food >= self.step_limit
         if isinstance(directions, (int, np.integer)):
             directions = [directions]
         for i, direction in enumerate(directions):
@@ -145,19 +152,7 @@ class Controller():
             if type(self.snakes[i]) != type(None):
                 self.current_distance = abs(self.snakes[i].head[0]-self.food_coord[0]) + abs(self.snakes[i].head[1]-self.food_coord[1])
             
-            # reward
-            if truncated:
-                reward = -10
-            else:
-                reward = self.move_result(direction, i)
-                
-            if reward > 0:
-                self.current_distance = abs(self.snakes[i].head[0]-self.food_coord[0]) + abs(self.snakes[i].head[1]-self.food_coord[1])
-                reward += len(self.snakes[i].body) * 0.5
-            elif reward != -5:
-                dis = (self.prev_distance - self.current_distance)
-                reward += 0.1 * dis
-                reward -= 0.01 * (1.01**self.steps_without_food)
+            reward = self.move_result(direction, i)
             rewards.append(reward)
 
             self.prev_distance = self.current_distance    
@@ -165,10 +160,8 @@ class Controller():
         terminated = self.snakes_remaining < 1 or self.grid.open_space < 1
 
         # done = self.snakes_remaining < 1 or self.grid.open_space < 1
-        snake_size = 0
-        if type(self.snakes[i]) != type(None):
-            snake_size = len(self.snakes[0].body)+1
+
         if len(rewards) == 1:
-            return self.grid.grid.copy(), rewards[0], terminated, truncated, {"snakes_remaining": self.snakes_remaining,"snake_size": snake_size}
+            return self.grid.grid.copy(), rewards[0], terminated, truncated, {"snakes_remaining": self.snakes_remaining,"snake_size": self.snake_sizes[0]}
         else:
             return self.grid.grid.copy(), rewards, terminated, truncated, {"snakes_remaining": self.snakes_remaining}
