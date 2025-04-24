@@ -9,7 +9,7 @@ class Controller():
     This class combines the Snake, Food, and Grid classes to handle the game logic.
     """
 
-    def __init__(self, grid_size=[30, 30], unit_size=10, unit_gap=1, snake_size=3, n_snakes=1, n_foods=1, random_init=True, step_limit=500):
+    def __init__(self, grid_size=[30, 30], unit_size=10, unit_gap=1, snake_size=3, n_snakes=1, n_foods=1, random_init=True, step_limit=250):
 
         assert n_snakes < grid_size[0]//3
         assert n_snakes < 25
@@ -86,7 +86,7 @@ class Controller():
             self.grid.connect(snake.body.popleft(),
                               snake.body[0], self.grid.SPACE_COLOR)
             self.kill_snake(snake_idx)
-            reward = - math.pow(self.max_growth, (self.grid_size - self.snake_sizes[snake_idx]) / self.max_growth) * 0.1
+            reward = -1
             return reward
         # Check for reward
         elif self.grid.food_space(snake.head):
@@ -96,7 +96,7 @@ class Controller():
                 snake.body[0], snake.body[1], self.grid.BODY_COLOR)
             # Avoid miscount of grid.open_space
             self.grid.cover(snake.head, snake.head_color)
-            reward = self.snake_sizes[snake_idx] / self.grid_size
+            reward = 1
             self.snake_sizes[snake_idx] += 1
             self.food_coord = self.grid.new_food()
             self.current_distance = abs(self.snakes[snake_idx].head[0]-self.food_coord[0]) + abs(self.snakes[snake_idx].head[1]-self.food_coord[1])
@@ -106,7 +106,7 @@ class Controller():
                 empty_coord, snake.body[0], self.grid.SPACE_COLOR)
             self.grid.draw(snake.head, snake.head_color)
             dis = (self.prev_distance - self.current_distance)
-            reward = (dis / self.snake_sizes[snake_idx])*0.1
+            reward = dis * 0.01
 
         self.grid.connect(snake.body[-1], snake.head, self.grid.BODY_COLOR)
 
