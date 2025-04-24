@@ -16,14 +16,14 @@ def fast_downsample(observation, cell_size=10):
     result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
     return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip_ppo,lr_gamma,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip_ppo,lr_gamma,lr_scheduler_step_size,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
     from torch.utils.tensorboard import SummaryWriter
     current_time = time.strftime('%Y%m%d_%H%M%S')
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
     writer = SummaryWriter(log_dir=log_dir)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = StepLR(optimizer, step_size=500, gamma=lr_gamma)
+    scheduler = StepLR(optimizer, step_size=lr_scheduler_step_size, gamma=lr_gamma)
     
     buffer_actions = []
     buffer_rewards = []
@@ -203,6 +203,7 @@ if __name__ == '__main__':
         c1=0.5,
         c2=0.02,
         save_interval=1000,
+        lr_scheduler_step_size = 100,
         lr_gamma=0.99,
         save_dir = './models/',
         log_dir = './logs/'
