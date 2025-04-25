@@ -96,7 +96,7 @@ class Controller():
                 snake.body[0], snake.body[1], self.grid.BODY_COLOR)
             # Avoid miscount of grid.open_space
             self.grid.cover(snake.head, snake.head_color)
-            reward = 1
+            reward = 1*(self.snake_sizes[snake_idx]-1)
             self.snake_sizes[snake_idx] += 1
             self.food_coord = self.grid.new_food()
             self.current_distance = abs(self.snakes[snake_idx].head[0]-self.food_coord[0]) + abs(self.snakes[snake_idx].head[1]-self.food_coord[1])

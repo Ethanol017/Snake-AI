@@ -166,22 +166,21 @@ def test(model,model_name,env,test_times=10,render=False):
     model.eval()
     for i in range(test_times):
         state, _ = env.reset()
-        state_tensor = torch.from_numpy(fast_downsample(state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
-        snake_length = 0
+        state_tensor = torch.from_numpy(fast_downsample(state)).permute(
+            2, 0, 1).float().unsqueeze(0).to(device)
         reward_sum = 0
         while True:
             action_prob, _ = model(state_tensor)
             action = action_prob.argmax().item()
             next_state, reward, terminated, truncated, info = env.step(action)
             # print(reward)
-            # print(info["snake_size"])
             reward_sum += reward
             state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
             if render:
                 env.render()
             
             if terminated or truncated:
-                print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}")
+                print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
                 break
             
             
@@ -193,12 +192,12 @@ if __name__ == '__main__':
         model=model,
         env=env,
         episodes = 20000,
-        epochs=10,
-        buffer_size=1024,
+        epochs=5,
+        buffer_size=2048,
         batch_size=128,
-        gamma=0.99,
+        gamma=0.96,
         lambda_=0.95,
-        lr=5e-4,
+        lr=1e-4,
         clip_ppo=0.2,
         c1=0.5,
         c2=0.02,
