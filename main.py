@@ -165,8 +165,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
 def test(model,model_name,env,test_times=10,render=False,output=True):
     model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
     model.eval()
-    max_length = 0
-    tatol_length = 0
+    lengths = []
     for i in range(test_times):
         state, _ = env.reset()
         state_tensor = torch.from_numpy(fast_downsample(state)).permute(
@@ -185,12 +184,10 @@ def test(model,model_name,env,test_times=10,render=False,output=True):
             if terminated or truncated:
                 if output:
                     print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
-                tatol_length += info['snake_size']
-                if info['snake_size'] > max_length:
-                    max_length = info['snake_size']
+                lengths.append(info['snake_size'])
                 break
-    print(f"Max Length: {max_length} , Average Length: {tatol_length/test_times}")
-    return (max_length, tatol_length/test_times)
+    print(f"Max Length: {max(lengths)} , Average Length: {sum(lengths)/test_times} standard deviation: {np.std(lengths)}")
+    return (max(lengths), sum(lengths)/test_times)
             
 if __name__ == '__main__':
     env = gym.make('snake-v0')
