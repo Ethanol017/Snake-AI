@@ -86,7 +86,7 @@ class Controller():
             self.grid.connect(snake.body.popleft(),
                               snake.body[0], self.grid.SPACE_COLOR)
             self.kill_snake(snake_idx)
-            reward = -1
+            reward = -1 * pow(0.97, (self.snake_sizes[snake_idx]-1))
             return reward
         # Check for reward
         elif self.grid.food_space(snake.head):
@@ -96,7 +96,7 @@ class Controller():
                 snake.body[0], snake.body[1], self.grid.BODY_COLOR)
             # Avoid miscount of grid.open_space
             self.grid.cover(snake.head, snake.head_color)
-            reward = 1*(self.snake_sizes[snake_idx]-1)
+            reward = 1 * pow(1.25, (self.snake_sizes[snake_idx]-1))
             self.snake_sizes[snake_idx] += 1
             self.food_coord = self.grid.new_food()
             self.current_distance = abs(self.snakes[snake_idx].head[0]-self.food_coord[0]) + abs(self.snakes[snake_idx].head[1]-self.food_coord[1])
