@@ -51,7 +51,8 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                 log_prob = dist.log_prob(action)
                 
                 next_state, reward, terminated, truncated, info = env.step(action)
-                snake_size = info['snake_size']
+                if info['snake_size'] > snake_size :
+                    snake_size = info['snake_size']
                 done = terminated or truncated
                 reward_sum += reward
                 next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
@@ -66,6 +67,7 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                 state_tensor = next_state_tensor
                 
                 if done:            
+                    play_count += 1
                     state, _ = env.reset()
                     state = fast_downsample(state)
                     state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
@@ -73,7 +75,6 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
                     writer.add_scalar("gameplay/snake_size", snake_size, play_count)
                     reward_sum = 0
                     snake_size = 0
-                    play_count += 1
                     if episode_count >= episodes: 
                         break 
   
@@ -161,9 +162,11 @@ def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip
             save_path = os.path.join(save_dir, f"snake_ppo_ep{episode_count}.pth")
             torch.save(model.state_dict(), save_path)
             
-def test(model,model_name,env,test_times=10,render=False):
+def test(model,model_name,env,test_times=10,render=False,output=True):
     model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
     model.eval()
+    max_length = 0
+    tatol_length = 0
     for i in range(test_times):
         state, _ = env.reset()
         state_tensor = torch.from_numpy(fast_downsample(state)).permute(
@@ -180,9 +183,14 @@ def test(model,model_name,env,test_times=10,render=False):
                 env.render()
             
             if terminated or truncated:
-                print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
+                if output:
+                    print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
+                tatol_length += info['snake_size']
+                if info['snake_size'] > max_length:
+                    max_length = info['snake_size']
                 break
-            
+    print(f"Max Length: {max_length} , Average Length: {tatol_length/test_times}")
+    return (max_length, tatol_length/test_times)
             
 if __name__ == '__main__':
     env = gym.make('snake-v0')
@@ -201,7 +209,7 @@ if __name__ == '__main__':
         clip_ppo=0.2,
         c1=0.5,
         c2=0.02,
-        save_interval=1000,
+        save_interval=100,
         lr_scheduler_step_size = 100,
         lr_gamma=0.99,
         save_dir = './models/',
