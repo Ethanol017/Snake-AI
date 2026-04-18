@@ -166,6 +166,7 @@ def test(model,model_name,env,test_times=10,render=False,output=True):
     model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
     model.eval()
     lengths = []
+    max_size = 0
     for i in range(test_times):
         state, _ = env.reset()
         state_tensor = torch.from_numpy(fast_downsample(state)).permute(
@@ -181,6 +182,9 @@ def test(model,model_name,env,test_times=10,render=False,output=True):
             if render:
                 env.render()
             
+            if info['snake_size'] > max_size:
+                np.save('./max_size_state.npy', next_state)
+                max_size = info['snake_size']
             if terminated or truncated:
                 if output:
                     print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
