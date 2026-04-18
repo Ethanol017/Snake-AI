@@ -1,86 +1,118 @@
-import os, subprocess, time, signal
-import numpy as np
-import gymnasium as gym
-from gymnasium import error, spaces, utils
-from gymnasium.utils import seeding
-from gym_snake.envs.snake import Controller, Discrete
+from __future__ import annotations
 
-try:
-    import google.colab # type: ignore
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib
-    if IN_COLAB:
-        matplotlib.use('Agg')
-    else:
-        matplotlib.use('TkAgg')
-except ImportError as e:
-    raise error.DependencyNotInstalled("{}. (HINT: see matplotlib documentation for installation https://matplotlib.org/faq/installing_faq.html#installation".format(e))
+from typing import Optional
+
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+
+from gym_snake.envs.fast_core import SnakeCore
+
 
 class SnakeEnv(gym.Env):
-    metadata = {'render_modes': ['human'],'render_fps':10}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
-    def __init__(self, grid_size=[12,12], unit_size=10, unit_gap=1, snake_size=3, n_snakes=1, n_foods=1, random_init=True):
-        self.grid_size = grid_size
-        self.unit_size = unit_size
-        self.unit_gap = unit_gap
-        self.snake_size = snake_size
-        self.n_snakes = n_snakes
-        self.n_foods = n_foods
-        self.viewer = None
-        self.random_init = random_init
+    def __init__(
+        self,
+        grid_size=(12, 12),
+        snake_size=3,
+        step_limit=250,
+        random_init=True,
+        render_mode=None,
+        pixel_size=24,
+    ):
+        self.grid_size = (int(grid_size[0]), int(grid_size[1]))
+        self.snake_size = int(snake_size)
+        self.step_limit = int(step_limit)
+        self.random_init = bool(random_init)
+        self.render_mode = render_mode
+        self.pixel_size = int(pixel_size)
 
         self.action_space = spaces.Discrete(4)
-
-        controller = Controller(
-            self.grid_size, self.unit_size, self.unit_gap,
-            self.snake_size, self.n_snakes, self.n_foods,
-            random_init=self.random_init)
-        grid = controller.grid
         self.observation_space = spaces.Box(
-            low=np.min(grid.COLORS),
-            high=np.max(grid.COLORS),
+            low=0,
+            high=3,
+            shape=(self.grid_size[1], self.grid_size[0]),
             dtype=np.uint8,
-            shape=grid.grid.shape
         )
 
-    def step(self, action):
-        self.last_obs, rewards, terminated, truncated, info = self.controller.step(action)
-        return self.last_obs, rewards, terminated, truncated , info
+        self._core: Optional[SnakeCore] = None
+        self.last_obs = np.zeros(self.observation_space.shape, dtype=np.uint8)
+        self._figure = None
+        self._axes = None
+        self._palette = np.asarray(
+            [
+                [22, 22, 22],
+                [45, 160, 65],
+                [230, 70, 70],
+                [30, 130, 210],
+            ],
+            dtype=np.uint8,
+        )
 
-    def reset(self,seed=None,options=None):
-        self.controller = Controller(self.grid_size, self.unit_size, self.unit_gap, self.snake_size, self.n_snakes, self.n_foods, random_init=self.random_init)
-        self.last_obs = self.controller.grid.grid.copy()
-        
-        return self.last_obs,{}
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
 
-    def render(self, mode='human', close=False, frame_speed=.1):
-        if IN_COLAB:
-            from IPython.display import display, clear_output # type: ignore
-            if self.viewer is None:
-                self.fig = plt.figure(figsize=(8, 8))
-                self.viewer = self.fig.add_subplot(111)
-            
-                self.viewer.clear()
-                self.viewer.imshow(self.last_obs)
-                self.viewer.axis('off')
-                
-                clear_output(wait=True)
-                display(plt.gcf())
+        if self._core is None:
+            self._core = SnakeCore(
+                width=self.grid_size[0],
+                height=self.grid_size[1],
+                init_length=self.snake_size,
+                step_limit=self.step_limit,
+                random_init=self.random_init,
+                rng=self.np_random,
+            )
         else:
-            if self.viewer is None:
-                self.fig = plt.figure()
-                self.viewer = self.fig.add_subplot(111)
-                plt.ion()
-                self.fig.show()
-            
-            self.viewer.clear()
-            self.viewer.imshow(self.last_obs)
-            plt.pause(frame_speed)
-            self.fig.canvas.draw()
+            self._core.rng = self.np_random
 
-    def seed(self, x):
-        pass
+        self.last_obs, info = self._core.reset()
+        return self.last_obs, info
+
+    def step(self, action):
+        if self._core is None:
+            raise RuntimeError("Call reset() before step().")
+
+        self.last_obs, reward, terminated, truncated, info = self._core.step(action)
+        return self.last_obs, reward, terminated, truncated, info
+
+    def render(self):
+        if self.render_mode is None:
+            return None
+
+        rgb = self._to_rgb(self.last_obs)
+        if self.render_mode == "rgb_array":
+            return rgb
+
+        if self.render_mode != "human":
+            raise ValueError(f"Unsupported render_mode: {self.render_mode}")
+
+        import matplotlib.pyplot as plt
+
+        if self._figure is None or self._axes is None:
+            self._figure, self._axes = plt.subplots()
+            plt.ion()
+
+        self._axes.clear()
+        self._axes.imshow(rgb)
+        self._axes.axis("off")
+        self._figure.canvas.draw_idle()
+        plt.pause(1.0 / self.metadata["render_fps"])
+        return None
+
+    def close(self):
+        if self._figure is None:
+            return
+
+        import matplotlib.pyplot as plt
+
+        plt.close(self._figure)
+        self._figure = None
+        self._axes = None
+
+    def _to_rgb(self, board: np.ndarray) -> np.ndarray:
+        rgb = self._palette[board]
+        if self.pixel_size <= 1:
+            return rgb
+        return np.repeat(
+            np.repeat(rgb, self.pixel_size, axis=0), self.pixel_size, axis=1
+        )

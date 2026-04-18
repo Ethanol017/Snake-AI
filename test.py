@@ -6,7 +6,7 @@ from model import SnakePPO
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = gym.make('snake-v0')
+    env = gym.make("snake-v0", render_mode="human")
     model = SnakePPO().to(device)
     # max_length = 0
     # max_average_length = 0
