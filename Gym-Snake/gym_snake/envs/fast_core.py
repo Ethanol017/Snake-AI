@@ -27,6 +27,13 @@ class SnakeCore:
         ],
         dtype=np.int16,
     )
+    
+    REWARD_FOOD = 10
+    REWARD_STEP = -0.01
+    REWARD_DEATH = -10
+    REWARD_FILLED = 100.0
+    REWARD_PBRS_GAMMA = 0.99 # set same as train gamma
+    REWARD_PBRS_COEFF = 1
 
     def __init__(
         self,
@@ -119,30 +126,21 @@ class SnakeCore:
         self.head_idx = self.length - 1
 
         self._spawn_food()
-        if self.food_x >= 0:
-            self.prev_distance = self._distance(
-                self.head_x, self.head_y, self.food_x, self.food_y
-            )
-        else:
-            self.prev_distance = 0
+        self.prev_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
 
         return self.board.copy(), {"snake_size": int(self.length)}
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, int]]:
         if self.terminated or self.truncated:
-            return (
-                self.board.copy(),
-                0.0,
-                bool(self.terminated),
-                bool(self.truncated),
-                {"snake_size": int(self.length)},
-            )
+            raise RuntimeError("Cannot call step() on terminated or truncated game. Call reset() to start a new game.")
 
         action_int = int(action) % 4
+        # Avoid 180 degree turns
         if abs(action_int - self.direction) != 2:
             self.direction = action_int
 
         self.steps_without_food += 1
+        # Time out (truncated)
         if self.steps_without_food >= self.step_limit:
             return self._die(truncated=True)
 
@@ -162,11 +160,8 @@ class SnakeCore:
         tail_cell = self._index(tail_x, tail_y)
 
         if next_code in (self.BODY, self.HEAD):
-            move_into_tail = (not will_eat) and (next_cell == tail_cell)
-            if not move_into_tail:
+            if next_cell == tail_cell:
                 return self._die(truncated=False)
-
-        old_length = self.length
 
         self.board[self.head_y, self.head_x] = self.BODY
 
@@ -179,35 +174,30 @@ class SnakeCore:
         self._x_buffer[self.head_idx] = next_x
         self._y_buffer[self.head_idx] = next_y
 
+        # If eating, it has been removed from free, so don't call function again
         if not will_eat:
             self._remove_from_free(next_cell)
 
         self.board[next_y, next_x] = self.HEAD
+        
+        reward = self.REWARD_STEP
 
         if will_eat:
             self.length += 1
             self.steps_without_food = 0
-            reward = 1.0 * pow(1.25, max(old_length - 1, 0))
+            reward += self.REWARD_FOOD
 
             spawned = self._spawn_food()
             if not spawned:
                 self.terminated = True
+                reward = self.REWARD_FILLED
 
-            if self.food_x >= 0:
-                self.prev_distance = self._distance(
-                    self.head_x, self.head_y, self.food_x, self.food_y
-                )
-            else:
-                self.prev_distance = 0
+            self.prev_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
         else:
-            if self.food_x >= 0:
-                current_distance = self._distance(
-                    self.head_x, self.head_y, self.food_x, self.food_y
-                )
-                reward = (self.prev_distance - current_distance) * 0.01
-                self.prev_distance = current_distance
-            else:
-                reward = 0.0
+            current_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
+            # Potential-Based Reward Shaping (PBRS) only for non-food steps
+            reward += self.REWARD_PBRS_COEFF * (self.prev_distance - self.REWARD_PBRS_GAMMA * current_distance)
+            self.prev_distance = current_distance
 
         return (
             self.board.copy(),
@@ -236,10 +226,9 @@ class SnakeCore:
     def _die(
         self, truncated: bool
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, int]]:
-        self._clear_snake()
         self.terminated = True
         self.truncated = bool(truncated)
-        reward = -1.0 * pow(0.98, max(self.length - 1, 0))
+        reward = self.REWARD_DEATH
         return (
             self.board.copy(),
             float(reward),
@@ -247,15 +236,6 @@ class SnakeCore:
             bool(self.truncated),
             {"snake_size": int(self.length)},
         )
-
-    def _clear_snake(self) -> None:
-        for offset in range(self.length):
-            idx = (self.tail_idx + offset) % self.max_cells
-            x = int(self._x_buffer[idx])
-            y = int(self._y_buffer[idx])
-            if 0 <= x < self.width and 0 <= y < self.height:
-                self.board[y, x] = self.EMPTY
-                self._add_to_free(self._index(x, y))
 
     def _spawn_food(self) -> bool:
         if self._free_count <= 0:
