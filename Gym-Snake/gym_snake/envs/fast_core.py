@@ -32,7 +32,7 @@ class SnakeCore:
     REWARD_STEP = -0.01
     REWARD_DEATH = -10
     REWARD_FILLED = 100.0
-    REWARD_PBRS_GAMMA = 0.99 # set same as train gamma
+    REWARD_PBRS_GAMMA = 0.99  # keep consistent with PPO gamma
     REWARD_PBRS_COEFF = 1
 
     def __init__(
@@ -78,7 +78,8 @@ class SnakeCore:
 
         self.food_x = -1
         self.food_y = -1
-        self.prev_distance = 0
+        self.max_distance = float((self.width - 1) + (self.height - 1))
+        self.prev_potential = 0.0
         self.steps_without_food = 0
         self.terminated = False
         self.truncated = False
@@ -126,7 +127,7 @@ class SnakeCore:
         self.head_idx = self.length - 1
 
         self._spawn_food()
-        self.prev_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
+        self.prev_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
 
         return self.board.copy(), {"snake_size": int(self.length)}
 
@@ -191,13 +192,11 @@ class SnakeCore:
             if not spawned:
                 self.terminated = True
                 reward = self.REWARD_FILLED
-
-            self.prev_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
+            self.prev_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
         else:
-            current_distance = self._distance(self.head_x, self.head_y, self.food_x, self.food_y)
-            # Potential-Based Reward Shaping (PBRS) only for non-food steps
-            reward += self.REWARD_PBRS_COEFF * (self.prev_distance - self.REWARD_PBRS_GAMMA * current_distance)
-            self.prev_distance = current_distance
+            current_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
+            reward += self.REWARD_PBRS_COEFF * (self.REWARD_PBRS_GAMMA * current_potential - self.prev_potential)
+            self.prev_potential = current_potential
 
         return (
             self.board.copy(),
@@ -229,6 +228,9 @@ class SnakeCore:
         self.terminated = True
         self.truncated = bool(truncated)
         reward = self.REWARD_DEATH
+        # Apply terminal-state PBRS transition with Phi(terminal)=0.
+        reward += self.REWARD_PBRS_COEFF * (0.0 - self.prev_potential)
+        self.prev_potential = 0.0
         return (
             self.board.copy(),
             float(reward),
@@ -278,3 +280,7 @@ class SnakeCore:
     @staticmethod
     def _distance(x1: int, y1: int, x2: int, y2: int) -> int:
         return abs(x1 - x2) + abs(y1 - y2)
+
+    def _potential(self, x1: int, y1: int, x2: int, y2: int) -> float:
+        distance = float(self._distance(x1, y1, x2, y2))
+        return 1.0 - (distance / self.max_distance)
