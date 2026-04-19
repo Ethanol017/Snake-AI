@@ -4,219 +4,228 @@ import gymnasium as gym
 import numpy as np
 import torch
 from model import SnakePPO
-from torch.optim.lr_scheduler import StepLR
 import torch.nn.functional as F
-import gym_snake # type: ignore
-
-
+import gym_snake  # type: ignore
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def fast_downsample(observation, cell_size=10):
-    result = observation[cell_size//2::cell_size, cell_size//2::cell_size, :]
-    return result
 
-def train(model,env,episodes,epochs,buffer_size,batch_size,lr,gamma,lambda_,clip_ppo,lr_gamma,lr_scheduler_step_size,c1=0.5,c2=0.01,save_interval=100,save_dir='./models/',log_dir='./logs/'):
+def _process_obs(observation):
+    # Convert env obs to One-Hot encoding and add batch dim if needed
+    obs = np.asarray(observation, dtype=np.int64)
+
+    # Single env
+    if obs.ndim == 2:
+        obs = obs[None, ...]
+
+    # Discrete map (B, H, W) -> one-hot (B, C, H, W)
+    one_hot = np.eye(4, dtype=np.float32)[obs]  # (B, H, W, C)
+    one_hot = np.moveaxis(one_hot, -1, 1)  # (B, C, H, W)
+    return one_hot
+
+
+def train(
+    model,
+    env,
+    num_updates,
+    epochs,
+    buffer_size,
+    batch_size,
+    lr,
+    gamma,
+    lambda_,
+    clip_ppo,
+    c1=0.5,
+    c2=0.01,
+    save_interval=100,
+    save_dir="./models/",
+    log_dir="./logs/",
+):
     from torch.utils.tensorboard import SummaryWriter
-    current_time = time.strftime('%Y%m%d_%H%M%S')
+
+    current_time = time.strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
     writer = SummaryWriter(log_dir=log_dir)
-    
+
+    obs, _ = env.reset()
+    obs = _process_obs(obs)
+    obs_shape = obs.shape[1:]
+    num_envs = int(obs.shape[0])
+    is_vector_env = hasattr(env, "num_envs")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = StepLR(optimizer, step_size=lr_scheduler_step_size, gamma=lr_gamma)
-    
-    buffer_actions = []
-    buffer_rewards = []
-    buffer_dones = []
-    buffer_log_probs = []
-    buffer_values = []
-    buffer_states = []
-    play_count = 0
-    episode_count = 0
-    while episode_count < episodes:
+
+    # Fixed rollout buffers with shape (T, N, ...)
+    obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
+    rollout_rewards = np.zeros(num_envs, dtype=np.float32)
+    rollout_max_sizes = np.zeros(num_envs, dtype=np.int32)
+
+    b_actions = torch.zeros((buffer_size, num_envs), dtype=torch.int64, device=device)
+    b_rewards = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
+    b_dones = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
+    b_log_probs = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
+    b_values = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
+    b_states = torch.zeros((buffer_size, num_envs) + obs_shape, dtype=torch.float32, device=device)
+
+    done_count_total = 0
+    for update in range(1, num_updates + 1):
+        rollout_rewards.fill(0.0)
+        rollout_max_sizes.fill(0)
+        rollout_done_count = 0
         # play game
-        state,_ = env.reset()
-        state = fast_downsample(state)
-        state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
-        done = False
-        reward_sum = 0
-        snake_size = 0
-        
         for step in range(buffer_size):
             with torch.no_grad():
-                action_prob, state_value = model(state_tensor.unsqueeze(0))
-                dist = torch.distributions.Categorical(action_prob)
-
+                action_logits, state_value = model(obs_tensor)
+                dist = torch.distributions.Categorical(logits=action_logits)
                 action = dist.sample()
                 log_prob = dist.log_prob(action)
-                
-                next_state, reward, terminated, truncated, info = env.step(action)
-                if info['snake_size'] > snake_size :
-                    snake_size = info['snake_size']
-                done = terminated or truncated
-                reward_sum += reward
-                next_state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().to(device)
-                
-                buffer_states.append(state_tensor.detach().cpu())
-                buffer_actions.append(action.detach().cpu())
-                buffer_rewards.append(reward)
-                buffer_dones.append(done)
-                buffer_log_probs.append(log_prob.detach().cpu())
-                buffer_values.append(state_value.squeeze().detach().cpu())
-                
-                state_tensor = next_state_tensor
-                
-                if done:            
-                    play_count += 1
-                    state, _ = env.reset()
-                    state = fast_downsample(state)
-                    state_tensor = torch.from_numpy(state).permute(2, 0, 1).float().to(device)
-                    writer.add_scalar("gameplay/reward", reward_sum, play_count)
-                    writer.add_scalar("gameplay/snake_size", snake_size, play_count)
-                    reward_sum = 0
-                    snake_size = 0
-                    if episode_count >= episodes: 
-                        break 
-  
+
+            if is_vector_env:
+                step_action = action.detach().cpu().numpy()
+            else:
+                step_action = int(action.item())
+
+            next_obs, reward, terminated, truncated, info = env.step(step_action)
+            next_obs_tensor = _process_obs(next_obs)
+            reward = np.asarray(reward, dtype=np.float32)
+            terminated = np.asarray(terminated, dtype=bool)
+            truncated = np.asarray(truncated, dtype=bool)
+            snake_size = np.asarray(info["snake_size"], dtype=np.int32)
+
+            # Add dim for env_num_dim
+            if reward.ndim == 0:
+                reward = reward[None]
+            if terminated.ndim == 0:
+                terminated = terminated[None]
+            if truncated.ndim == 0:
+                truncated = truncated[None]
+            if snake_size.ndim == 0:
+                snake_size = snake_size[None]
+
+            done = np.logical_or(terminated, truncated)
+            b_states[step] = obs_tensor
+            b_actions[step] = action
+            b_rewards[step] = torch.as_tensor(reward, dtype=torch.float32, device=device)
+            b_dones[step] = torch.as_tensor(done, dtype=torch.float32, device=device)
+            b_log_probs[step] = log_prob
+            b_values[step] = state_value.squeeze(-1)
+
+            obs_tensor = torch.as_tensor(next_obs_tensor, dtype=torch.float32, device=device)
+            # Logging metrics are collected per rollout (per update), not per episode.
+            rollout_rewards += reward
+            rollout_max_sizes = np.maximum(rollout_max_sizes, snake_size)
+            rollout_done_count += int(done.sum())
+
+        done_count_total += rollout_done_count
+
         # --train--
-        if episode_count < episodes:
-            episode_count += 1
-            # compute_advantages
-            b_advantages = torch.zeros(buffer_size).to(device)
-            with torch.no_grad():
-                _ , last_value = model(state_tensor.unsqueeze(0))
-                last_value = last_value.squeeze(-1)
-            
-            last_adv = 0
-            for t in reversed(range(buffer_size)):
-                if t == buffer_size - 1:
-                    next_value = last_value
-                else:
-                    next_value = buffer_values[t + 1]
-                
-                delta = buffer_rewards[t] + gamma * next_value * (1 - int(buffer_dones[t])) - buffer_values[t]
-                last_adv = delta + gamma * lambda_ * (1 - int(buffer_dones[t])) * last_adv
-                b_advantages[t] = last_adv
-            b_returns = b_advantages + torch.stack(buffer_values).to(device)
-            
-            
-            b_states = torch.stack(buffer_states).to(device)
-            b_actions = torch.stack(buffer_actions).squeeze().to(device)
-            b_log_probs = torch.stack(buffer_log_probs).squeeze().to(device)
-            
-            b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
-            
-            # print(f"b_advantages: {b_advantages.shape}")
-            
-            indices = np.arange(buffer_size)
-            for epoch in range(epochs):
-                np.random.shuffle(indices)
-                for start in range(0, buffer_size, batch_size):
-                    mb_indices = indices[start : start + batch_size]
+        # Compute advantages
+        b_advantages = torch.zeros((buffer_size, num_envs), device=device)
+        with torch.no_grad():
+            _, last_value = model(obs_tensor)
+            last_value = last_value.squeeze(-1)
 
-                    mb_states = b_states[mb_indices]
-                    mb_actions = b_actions[mb_indices]
-                    mb_old_log_probs = b_log_probs[mb_indices]
-                    mb_advantages = b_advantages[mb_indices]
-                    mb_returns = b_returns[mb_indices]
-
-                    new_action_probs, current_values = model(mb_states)
-                    dist = torch.distributions.Categorical(new_action_probs)
-                    new_log_probs = dist.log_prob(mb_actions)
-                    entropy = dist.entropy().mean()
-
-                    ratio = (new_log_probs - mb_old_log_probs).exp()
-
-                    # Policy Loss
-                    surr1 = ratio * mb_advantages
-                    surr2 = torch.clamp(ratio, 1 - clip_ppo, 1 + clip_ppo) * mb_advantages
-                    policy_loss = -torch.min(surr1, surr2).mean()
-
-                    # Value Loss
-                    current_values = current_values.squeeze()
-                    value_loss = F.mse_loss(current_values, mb_returns)
-                    # Total Loss
-                    loss = policy_loss + c1 * value_loss - c2 * entropy
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-                    optimizer.step()
-            scheduler.step()
+        last_adv = torch.zeros(num_envs, device=device)
+        for t in reversed(range(buffer_size)):
+            next_value = b_values[t + 1] if t != buffer_size - 1 else last_value
+            non_terminal = 1.0 - b_dones[t]
             
-            writer.add_scalar("loss/policy_loss", policy_loss.item(), episode_count)
-            writer.add_scalar("loss/value_loss", value_loss.item(), episode_count)
-            writer.add_scalar("loss/entropy", entropy.item(), episode_count)
-            writer.add_scalar("loss/loss", loss.item(), episode_count)
-            writer.add_scalar("learning_rate", scheduler.get_last_lr()[0], episode_count)
-            print(f"Episode {episode_count}/{episodes} , PlayCount {play_count}")
+            delta = b_rewards[t] + gamma * next_value * non_terminal - b_values[t]
+            last_adv = delta + gamma * lambda_ * non_terminal * last_adv
+            b_advantages[t] = last_adv
         
-        buffer_states.clear()
-        buffer_actions.clear()
-        buffer_rewards.clear()
-        buffer_dones.clear()
-        buffer_log_probs.clear()
-        buffer_values.clear()
+        b_returns = b_advantages + b_values
 
-        if episode_count > 0 and episode_count % save_interval == 0:
-            save_path = os.path.join(save_dir, f"snake_ppo_ep{episode_count}.pth")
+        # Flatten (T, N, ...) -> (T*N, ...)
+        flat_states = b_states.reshape(buffer_size * num_envs, *obs_shape)
+        flat_actions = b_actions.reshape(buffer_size * num_envs)
+        flat_old_log_probs = b_log_probs.reshape(buffer_size * num_envs)
+        flat_returns = b_returns.reshape(buffer_size * num_envs)
+        flat_advantages = b_advantages.reshape(buffer_size * num_envs)
+
+        flat_advantages = (flat_advantages - flat_advantages.mean()) / (
+            flat_advantages.std() + 1e-8
+        )
+
+        # Update epochs times
+        total_batch = buffer_size * num_envs
+        for epoch in range(epochs):
+            indices = torch.randperm(total_batch, device=device)
+            for start in range(0, total_batch, batch_size):
+                mb_indices = indices[start : start + batch_size]
+
+                mb_states = flat_states[mb_indices]
+                mb_actions = flat_actions[mb_indices]
+                mb_old_log_probs = flat_old_log_probs[mb_indices]
+                mb_advantages = flat_advantages[mb_indices]
+                mb_returns = flat_returns[mb_indices]
+
+                new_action_logits, current_values = model(mb_states)
+                dist = torch.distributions.Categorical(logits=new_action_logits)
+                new_log_probs = dist.log_prob(mb_actions)
+                entropy = dist.entropy().mean()
+
+                ratio = (new_log_probs - mb_old_log_probs).exp()
+
+                # Policy Loss
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1 - clip_ppo, 1 + clip_ppo) * mb_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+
+                # Value Loss
+                current_values = current_values.squeeze(-1)
+                value_loss = F.mse_loss(current_values, mb_returns)
+                
+                # Total Loss
+                loss = policy_loss + c1 * value_loss - c2 * entropy
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                optimizer.step()
+
+        writer.add_scalar("loss/policy", policy_loss.item(), update)
+        writer.add_scalar("loss/value", value_loss.item(), update)
+        writer.add_scalar("loss/entropy", entropy.item(), update)
+        writer.add_scalar("loss/total", loss.item(), update)
+        writer.add_scalar("rollout/reward_mean", float(rollout_rewards.mean()), update)
+        writer.add_scalar("rollout/reward_max", float(rollout_rewards.max()), update)
+        writer.add_scalar("rollout/snake_size_max_mean", float(rollout_max_sizes.mean()), update)
+        writer.add_scalar("rollout/done_count", rollout_done_count, update)
+
+        print(
+            f"--------------------------------------------------\n",
+            f"Update {update:4d}/{num_updates} | \n",
+            f"reward(mean/max) {rollout_rewards.mean():7.2f}/{rollout_rewards.max():7.2f} | \n",
+            f"snake_size(mean_max) {rollout_max_sizes.mean():6.2f} | \n",
+            f"done {rollout_done_count:4d} | done_total {done_count_total:6d} | \n",
+            f"loss(pi/v) {policy_loss.item():8.4f}/{value_loss.item():8.4f} \n",
+            f"--------------------------------------------------",
+        )
+
+        if update % save_interval == 0:
+            save_path = os.path.join(save_dir, f"snake_ppo_ep{update}.pth")
             torch.save(model.state_dict(), save_path)
-            
-def test(model,model_name,env,test_times=10,render=False,output=True):
-    model.load_state_dict(torch.load(model_name,weights_only=True,map_location=device))
-    model.eval()
-    lengths = []
-    max_size = 0
-    for i in range(test_times):
-        state, _ = env.reset()
-        state_tensor = torch.from_numpy(fast_downsample(state)).permute(
-            2, 0, 1).float().unsqueeze(0).to(device)
-        reward_sum = 0
-        while True:
-            action_prob, _ = model(state_tensor)
-            action = action_prob.argmax().item()
-            next_state, reward, terminated, truncated, info = env.step(action)
-            # print(reward)
-            reward_sum += reward
-            state_tensor = torch.from_numpy(fast_downsample(next_state)).permute(2, 0, 1).float().unsqueeze(0).to(device)
-            if render:
-                env.render()
-            
-            if info['snake_size'] > max_size:
-                np.save('./max_size_state.npy', next_state)
-                max_size = info['snake_size']
-            if terminated or truncated:
-                if output:
-                    print(f"Test {i+1}/{test_times}, Snake Reward: {reward_sum}, Snake Size: {info['snake_size']}")
-                lengths.append(info['snake_size'])
-                break
-    print(f"Max Length: {max(lengths)} , Average Length: {sum(lengths)/test_times} standard deviation: {np.std(lengths)}")
-    return (max(lengths), sum(lengths)/test_times)
-            
-if __name__ == '__main__':
-    env = gym.make('snake-v0')
-    model = SnakePPO().to(device)
-    
+
+
+if __name__ == "__main__":
+    env = gym.make_vec("snake-v0", num_envs=32, vectorization_mode="async")
+    model = SnakePPO(channel=4).to(device)
+
     train(
         model=model,
         env=env,
-        episodes = 2500,
-        epochs=5,
-        buffer_size=2048,
+        num_updates=3000,
+        epochs=4,
+        buffer_size=512,
         batch_size=128,
-        gamma=0.96,
+        gamma=0.99,
         lambda_=0.95,
         lr=1e-4,
         clip_ppo=0.2,
-        c1=0.3,
-        c2=0.05,
+        c1=0.5,
+        c2=0.04,
         save_interval=100,
-        lr_scheduler_step_size = 100,
-        lr_gamma=0.99,
-        save_dir = './models/',
-        log_dir = './logs/'
+        save_dir="./models/",
+        log_dir="./logs/",
     )
-    test(model=model,model_name='./models/snake_ppo_300.pth',env=env,test_times=10,render=True)
     env.close()
-    
-    
