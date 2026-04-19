@@ -161,7 +161,7 @@ class SnakeCore:
         tail_cell = self._index(tail_x, tail_y)
 
         if next_code in (self.BODY, self.HEAD):
-            if next_cell == tail_cell:
+            if not (next_cell == tail_cell and not will_eat):
                 return self._die(truncated=False)
 
         self.board[self.head_y, self.head_x] = self.BODY
