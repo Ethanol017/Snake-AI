@@ -1,27 +1,51 @@
-import os
-from main import test
 import gymnasium as gym
+import numpy as np
 import torch
 from model import SnakePPO
+import gym_snake  # type: ignore
+
+TEST_EPISODES = 10
+
+
+def process_obs(observation, device, one_hot_lut):
+    obs = np.asarray(observation, dtype=np.int64)
+    if obs.ndim != 2:
+        raise ValueError(f"Expected obs shape (H, W), got {obs.shape}")
+
+    obs_indices = torch.as_tensor(obs, dtype=torch.long, device=device)
+    one_hot = one_hot_lut[obs_indices]  # (H, W, C)
+    return one_hot.permute(2, 0, 1).unsqueeze(0).contiguous()
+
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = gym.make("snake-v0", render_mode="human")
-    model = SnakePPO().to(device)
-    # max_length = 0
-    # max_average_length = 0
-    # max_name = ''
-    # max_average_name = ''
-    # for model_name in os.listdir('./models/'):
-    #     if model_name.endswith('.pth') and 'ep' in model_name:
-    #         print(f"Testing {model_name}...")
-    #         m , t = test(model=model,model_name=os.path.join('./models/',model_name),env=env,test_times=100,render=False,output=False)
-    #         if m > max_length:
-    #             max_length = m
-    #             max_name = model_name
-    #         if t > max_average_length:  
-    #             max_average_length = t
-    #             max_average_name = model_name
-    # print(f"Max Length: {max_length} , Model Name: {max_name} \nMax Average Length: {max_average_length} , Model Name: {max_average_name}")    
-    test(model=model,model_name='./models/snake_ppo_ep1500.pth',env=env,test_times=100,render=False,output=False)
+    model_path = "models/snake_ppo_ep2000.pth"
+    model = SnakePPO(channel=4).to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    one_hot_lut = torch.eye(4, dtype=torch.float32, device=device)
+
+    reward_sum = 0.0
+    reward_max = float("-inf")
+    for episode in range(TEST_EPISODES):
+        obs, _ = env.reset()
+        done = False
+        episode_reward = 0.0
+
+        while not done:
+            env.render()
+            obs_tensor = process_obs(obs, device=device, one_hot_lut=one_hot_lut)
+            with torch.no_grad():
+                action_logits, _ = model(obs_tensor)
+            action = int(torch.argmax(action_logits, dim=-1).item())
+            obs, reward, terminated, truncated, _ = env.step(action)
+            done = bool(terminated or truncated)
+            episode_reward += float(reward)
+
+        print(f"episode: {episode + 1} reward: {episode_reward:.2f}")
+        reward_sum += episode_reward
+        reward_max = max(reward_max, episode_reward)
+
+    print(f"episodes: {TEST_EPISODES} reward(mean/max): {reward_sum/TEST_EPISODES:.2f}/{reward_max:.2f}")
     env.close()
