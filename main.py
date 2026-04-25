@@ -37,6 +37,7 @@ def train(
     clip_ppo,
     c1=0.5,
     c2=0.01,
+    clip_value_loss=True,
     save_interval=100,
     save_dir="./models/",
     log_dir="./logs/",
@@ -139,6 +140,7 @@ def train(
         flat_states = b_states.reshape(buffer_size * num_envs, *obs_shape)
         flat_actions = b_actions.reshape(buffer_size * num_envs)
         flat_old_log_probs = b_log_probs.reshape(buffer_size * num_envs)
+        flat_old_values = b_values.reshape(buffer_size * num_envs)
         flat_returns = b_returns.reshape(buffer_size * num_envs)
         flat_advantages = b_advantages.reshape(buffer_size * num_envs)
 
@@ -156,6 +158,7 @@ def train(
                 mb_states = flat_states[mb_indices]
                 mb_actions = flat_actions[mb_indices]
                 mb_old_log_probs = flat_old_log_probs[mb_indices]
+                mb_old_values = flat_old_values[mb_indices]
                 mb_advantages = flat_advantages[mb_indices]
                 mb_returns = flat_returns[mb_indices]
 
@@ -173,8 +176,14 @@ def train(
 
                 # Value Loss
                 current_values = current_values.squeeze(-1)
-                value_loss = F.mse_loss(current_values, mb_returns)
-                
+                if clip_value_loss:
+                    value_pred_clipped = mb_old_values + torch.clamp(current_values - mb_old_values,-clip_ppo,clip_ppo,)
+                    value_loss_unclipped = (current_values - mb_returns).pow(2)
+                    value_loss_clipped = (value_pred_clipped - mb_returns).pow(2)
+                    value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+                else:
+                    value_loss = 0.5 * F.mse_loss(current_values, mb_returns)
+
                 # Total Loss
                 loss = policy_loss + c1 * value_loss - c2 * entropy
 
@@ -226,6 +235,7 @@ if __name__ == "__main__":
         clip_ppo=0.2,
         c1=0.5,
         c2=0.04,
+        clip_value_loss=True,
         save_interval=100,
         save_dir="./models/",
         log_dir="./logs/",
