@@ -22,7 +22,7 @@ if __name__ == "__main__":
     env = gym.make("snake-v0", render_mode="human")
     model_path = "models/snake_ppo_ep2000.pth"
     model = SnakePPO(channel=4).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device)["model_state_dict"])
     model.eval()
     one_hot_lut = torch.eye(4, dtype=torch.float32, device=device)
 

@@ -41,11 +41,16 @@ def train(
     save_interval=100,
     save_dir="./models/",
     log_dir="./logs/",
+    remuse=False,
+    remuse_checkpoint=None,
+    remuse_logdir=None,
 ):
     from torch.utils.tensorboard import SummaryWriter
-
     current_time = time.strftime("%Y%m%d_%H%M%S")
-    log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
+    if remuse and remuse_logdir is not None:
+        log_dir = remuse_logdir
+    else:
+        log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
     writer = SummaryWriter(log_dir=log_dir)
     one_hot_lut = torch.eye(4, dtype=torch.float32, device=device)
 
@@ -55,6 +60,14 @@ def train(
     num_envs = int(obs_tensor.shape[0])
     is_vector_env = hasattr(env, "num_envs")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-5)
+    
+    update_start = 1
+    if remuse and remuse_checkpoint is not None:
+        checkpoint = torch.load(remuse_checkpoint, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        update_start = checkpoint.get("update", 1) + 1
+        print(f"Resumed model from {remuse_checkpoint} at update {update_start}")
 
     # Fixed rollout buffers with shape (T, N, ...)
     running_episode_rewards = np.zeros(num_envs, dtype=np.float32)
@@ -67,7 +80,7 @@ def train(
     b_states = torch.zeros((buffer_size, num_envs) + obs_shape, dtype=torch.float32, device=device)
 
     done_count_total = 0
-    for update in range(1, num_updates + 1):
+    for update in range(update_start, num_updates + 1):
         completed_episode_rewards = []
         completed_episode_sizes = []
         rollout_done_count = 0
@@ -263,7 +276,11 @@ def train(
 
         if update % save_interval == 0:
             save_path = os.path.join(save_dir, f"snake_ppo_ep{update}.pth")
-            torch.save(model.state_dict(), save_path)
+            torch.save({
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "update": update
+                    }, save_path)
 
 
 if __name__ == "__main__":
@@ -289,5 +306,8 @@ if __name__ == "__main__":
         save_interval=100,
         save_dir="./models/",
         log_dir="./logs/",
+        remuse=False,
+        remuse_checkpoint="models/snake_ppo_ep2000.pth",
+        remuse_logdir="./logs/snake_ppo_20260425_142233",
     )
     env.close()
