@@ -32,7 +32,7 @@ class SnakeCore:
     REWARD_STEP = -0.1
     REWARD_DEATH = -10.0
     REWARD_FILLED = 100.0
-    REWARD_PBRS_GAMMA = 0.99
+    REWARD_PBRS_GAMMA = 0.96
     REWARD_PBRS_COEFF = 1.0
 
     def __init__(
