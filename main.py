@@ -57,8 +57,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Fixed rollout buffers with shape (T, N, ...)
-    rollout_rewards = np.zeros(num_envs, dtype=np.float32)
-    rollout_max_sizes = np.zeros(num_envs, dtype=np.int32)
+    running_episode_rewards = np.zeros(num_envs, dtype=np.float32)
 
     b_actions = torch.zeros((buffer_size, num_envs), dtype=torch.int64, device=device)
     b_rewards = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
@@ -69,8 +68,8 @@ def train(
 
     done_count_total = 0
     for update in range(1, num_updates + 1):
-        rollout_rewards.fill(0.0)
-        rollout_max_sizes.fill(0)
+        completed_episode_rewards = []
+        completed_episode_sizes = []
         rollout_done_count = 0
         # play game
         for step in range(buffer_size):
@@ -111,12 +110,35 @@ def train(
             b_values[step] = state_value.squeeze(-1)
 
             obs_tensor = next_obs_tensor
-            # Logging metrics are collected per rollout (per update), not per episode.
-            rollout_rewards += reward
-            rollout_max_sizes = np.maximum(rollout_max_sizes, snake_size)
-            rollout_done_count += int(done.sum())
+            
+            running_episode_rewards += reward
+
+            # Record metrics only when an env finishes an episode.
+            done_indices = np.flatnonzero(done)
+            if done_indices.size > 0:
+                completed_episode_rewards.extend(
+                    running_episode_rewards[done_indices].tolist()
+                )
+                completed_episode_sizes.extend(
+                    snake_size[done_indices].astype(np.float32).tolist()
+                )
+                running_episode_rewards[done_indices] = 0.0
+                rollout_done_count += int(done_indices.size)
 
         done_count_total += rollout_done_count
+        reward_mean = (
+            float(np.mean(completed_episode_rewards))
+            if completed_episode_rewards
+            else 0.0
+        )
+        reward_max = (
+            float(np.max(completed_episode_rewards))
+            if completed_episode_rewards
+            else 0.0
+        )
+        snake_size_mean = (
+            float(np.mean(completed_episode_sizes)) if completed_episode_sizes else 0.0
+        )
 
         # --train--
         # Compute advantages
@@ -150,6 +172,12 @@ def train(
 
         # Update epochs times
         total_batch = buffer_size * num_envs
+        policy_loss_sum = 0.0
+        value_loss_sum = 0.0
+        entropy_sum = 0.0
+        total_loss_sum = 0.0
+        num_minibatches = 0
+
         for epoch in range(epochs):
             indices = torch.randperm(total_batch, device=device)
             for start in range(0, total_batch, batch_size):
@@ -192,22 +220,44 @@ def train(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
 
-        writer.add_scalar("loss/policy", policy_loss.item(), update)
-        writer.add_scalar("loss/value", value_loss.item(), update)
-        writer.add_scalar("loss/entropy", entropy.item(), update)
-        writer.add_scalar("loss/total", loss.item(), update)
-        writer.add_scalar("rollout/reward_mean", float(rollout_rewards.mean()), update)
-        writer.add_scalar("rollout/reward_max", float(rollout_rewards.max()), update)
-        writer.add_scalar("rollout/snake_size_max_mean", float(rollout_max_sizes.mean()), update)
+                policy_loss_sum += float(policy_loss.item())
+                value_loss_sum += float(value_loss.item())
+                entropy_sum += float(entropy.item())
+                total_loss_sum += float(loss.item())
+                num_minibatches += 1
+
+        policy_loss_mean = policy_loss_sum / max(num_minibatches, 1)
+        value_loss_mean = value_loss_sum / max(num_minibatches, 1)
+        entropy_mean = entropy_sum / max(num_minibatches, 1)
+        total_loss_mean = total_loss_sum / max(num_minibatches, 1)
+
+        returns_detached = flat_returns.detach()
+        values_detached = flat_old_values.detach()
+        returns_var = torch.var(returns_detached)
+        if float(returns_var.item()) > 1e-8:
+            explained_variance = 1.0 - torch.var(returns_detached - values_detached) / (returns_var + 1e-8)
+            explained_variance = float(explained_variance.item())
+        else:
+            explained_variance = 0.0
+
+        writer.add_scalar("loss/policy", policy_loss_mean, update)
+        writer.add_scalar("loss/value", value_loss_mean, update)
+        writer.add_scalar("loss/entropy", entropy_mean, update)
+        writer.add_scalar("loss/total", total_loss_mean, update)
+        writer.add_scalar("rollout/reward_mean", reward_mean, update)
+        writer.add_scalar("rollout/reward_max", reward_max, update)
+        writer.add_scalar("rollout/snake_size_mean", snake_size_mean, update)
         writer.add_scalar("rollout/done_count", rollout_done_count, update)
+        writer.add_scalar("diagnostics/explained_variance", explained_variance, update)
 
         print(
             f"--------------------------------------------------\n",
             f"Update {update:4d}/{num_updates} | \n",
-            f"reward(mean/max) {rollout_rewards.mean():7.2f}/{rollout_rewards.max():7.2f} | \n",
-            f"snake_size(mean_max) {rollout_max_sizes.mean():6.2f} | \n",
+            f"reward(mean/max) {reward_mean:7.2f}/{reward_max:7.2f} | \n",
+            f"snake_size(mean) {snake_size_mean:6.2f} | \n",
             f"done {rollout_done_count:4d} | done_total {done_count_total:6d} | \n",
-            f"loss(pi/v) {policy_loss.item():8.4f}/{value_loss.item():8.4f} \n",
+            f"loss(pi/v) {policy_loss_mean:8.4f}/{value_loss_mean:8.4f} | ",
+            f"ev {explained_variance:7.4f} \n",
             f"--------------------------------------------------",
         )
 
