@@ -1,48 +1,57 @@
-import time
 import gymnasium as gym
 import numpy as np
-import gym_snake # type: ignore
-
-# start = time.time()
-
-# num_envs = 1
-# envs = gym.make_vec('snake-v0',num_envs,vectorization_mode="async")
-
-# observation, _ = envs.reset()
-# print(envs.observation_space.shape)
-# for i in range(100):
-#     # envs.render()
-#     actions = envs.action_space.sample()
-#     obs, rewards, terminated, truncated, infos = envs.step(actions)
-
-# envs.close()
-
-# end = time.time()
-# print("time", end - start)
-
-env = gym.make("snake-v0")
+import gym_snake  # type: ignore  # Registers snake-v0
 
 
-state, _ = env.reset()
-old_reward = -100
-while True:
-    # action = env.action_space.sample()
-    # 0: up
-    # 1: right
-    # 2: down
-    # 3: left
-    action = int(input())
-    next_state, reward, terminated, truncated, _ = env.step(action)
-    cell_size = 10
-    print(next_state[cell_size//2::cell_size, cell_size//2::cell_size, :])
-    # if reward != old_reward:
-    #     print("reward", reward)
-    #     old_reward = reward
-    print(terminated,truncated,reward)
-    if terminated or truncated:
-        break
-    state = next_state
-    env.render()
-env.close()
+def describe_array(name, value):
+    arr = np.asarray(value)
+    print(f"{name:<16} shape={arr.shape}, dtype={arr.dtype}")
 
 
+def describe_infos(infos):
+    print(f"infos type       {type(infos).__name__}")
+
+    if isinstance(infos, dict):
+        for key, value in infos.items():
+            arr = np.asarray(value)
+            print(f"infos[{key!r}]   shape={arr.shape}, dtype={arr.dtype}")
+        return
+
+    if isinstance(infos, (list, tuple)):
+        print(f"infos length     {len(infos)}")
+        if len(infos) > 0 and isinstance(infos[0], dict):
+            keys = sorted({k for item in infos for k in item.keys()})
+            for key in keys:
+                values = [item.get(key, None) for item in infos]
+                arr = np.asarray(values)
+                print(f"infos[{key!r}]   shape={arr.shape}, dtype={arr.dtype}")
+        return
+
+    print(f"infos value      {infos}")
+
+
+if __name__ == "__main__":
+    num_envs = 8
+    num_steps = 3
+
+    vec_env = gym.make_vec("snake-v0", num_envs=num_envs, vectorization_mode="sync")
+    # vec_env = gym.make("snake-v0")
+    try:
+        obs, infos = vec_env.reset(seed=0)
+        print("=== reset ===")
+        describe_array("obs", obs)
+        describe_infos(infos)
+
+        for step_idx in range(1, num_steps + 1):
+            actions = vec_env.action_space.sample()
+            obs, rewards, terminated, truncated, infos = vec_env.step(actions)
+
+            print(f"\n=== step {step_idx} ===")
+            describe_array("actions", actions)
+            describe_array("obs", obs)
+            describe_array("rewards", rewards)
+            describe_array("terminated", terminated)
+            describe_array("truncated", truncated)
+            describe_infos(infos)
+    finally:
+        vec_env.close()
