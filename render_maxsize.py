@@ -11,6 +11,8 @@ palette = np.asarray(
     ],
     dtype=np.uint8,
 )
+# Process one hot state
+state = state.argmax(axis=1)[0]
 
 if state.ndim == 2:
     plt.imshow(palette[state])
