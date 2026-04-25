@@ -28,12 +28,12 @@ class SnakeCore:
         dtype=np.int16,
     )
     
-    REWARD_FOOD = 10
-    REWARD_STEP = -0.01
-    REWARD_DEATH = -10
+    REWARD_FOOD = 15.0
+    REWARD_STEP = -0.1
+    REWARD_DEATH = -10.0
     REWARD_FILLED = 100.0
-    REWARD_PBRS_GAMMA = 0.99  # keep consistent with PPO gamma
-    REWARD_PBRS_COEFF = 1
+    REWARD_PBRS_GAMMA = 0.99
+    REWARD_PBRS_COEFF = 1.0
 
     def __init__(
         self,

@@ -54,7 +54,7 @@ def train(
     obs_shape = obs_tensor.shape[1:]
     num_envs = int(obs_tensor.shape[0])
     is_vector_env = hasattr(env, "num_envs")
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-5)
 
     # Fixed rollout buffers with shape (T, N, ...)
     running_episode_rewards = np.zeros(num_envs, dtype=np.float32)
@@ -277,14 +277,14 @@ if __name__ == "__main__":
         device=device,
         num_updates=3000,
         epochs=4,
-        buffer_size=512,
+        buffer_size=256,
         batch_size=128,
-        gamma=0.99,
+        gamma=0.96,
         lambda_=0.95,
         lr=1e-4,
         clip_ppo=0.2,
-        c1=0.5,
-        c2=0.04,
+        c1=0.3,
+        c2=0.02,
         clip_value_loss=True,
         save_interval=100,
         save_dir="./models/",

@@ -16,7 +16,7 @@ class SnakeEnv(gym.Env):
         self,
         grid_size=(12, 12),
         snake_size=3,
-        step_limit=250,
+        step_limit=150,
         random_init=True,
         render_mode=None,
         pixel_size=24,
