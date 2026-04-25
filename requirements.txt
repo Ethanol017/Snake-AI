@@ -1,0 +1,4 @@
+-e ./Gym-Snake
+torch
+tensorboard
+matplotlib
