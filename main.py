@@ -7,10 +7,9 @@ from model import SnakePPO
 import torch.nn.functional as F
 import gym_snake  # type: ignore
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _process_obs(observation):
+def _process_obs(observation, one_hot_lut, device):
     # Convert env obs to One-Hot encoding and add batch dim if needed
     obs = np.asarray(observation, dtype=np.int64)
 
@@ -19,14 +18,15 @@ def _process_obs(observation):
         obs = obs[None, ...]
 
     # Discrete map (B, H, W) -> one-hot (B, C, H, W)
-    one_hot = np.eye(4, dtype=np.float32)[obs]  # (B, H, W, C)
-    one_hot = np.moveaxis(one_hot, -1, 1)  # (B, C, H, W)
-    return one_hot
+    obs_indices = torch.as_tensor(obs, dtype=torch.long, device=device)
+    one_hot = one_hot_lut[obs_indices]  # (B, H, W, C)
+    return one_hot.permute(0, 3, 1, 2).contiguous()
 
 
 def train(
     model,
     env,
+    device,
     num_updates,
     epochs,
     buffer_size,
@@ -46,16 +46,16 @@ def train(
     current_time = time.strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(log_dir, f"snake_ppo_{current_time}")
     writer = SummaryWriter(log_dir=log_dir)
+    one_hot_lut = torch.eye(4, dtype=torch.float32, device=device)
 
     obs, _ = env.reset()
-    obs = _process_obs(obs)
-    obs_shape = obs.shape[1:]
-    num_envs = int(obs.shape[0])
+    obs_tensor = _process_obs(obs, one_hot_lut=one_hot_lut, device=device)
+    obs_shape = obs_tensor.shape[1:]
+    num_envs = int(obs_tensor.shape[0])
     is_vector_env = hasattr(env, "num_envs")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Fixed rollout buffers with shape (T, N, ...)
-    obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device)
     rollout_rewards = np.zeros(num_envs, dtype=np.float32)
     rollout_max_sizes = np.zeros(num_envs, dtype=np.int32)
 
@@ -85,7 +85,7 @@ def train(
                 step_action = int(action.item())
 
             next_obs, reward, terminated, truncated, info = env.step(step_action)
-            next_obs_tensor = _process_obs(next_obs)
+            next_obs_tensor = _process_obs(next_obs, device=device, one_hot_lut=one_hot_lut)
             reward = np.asarray(reward, dtype=np.float32)
             terminated = np.asarray(terminated, dtype=bool)
             truncated = np.asarray(truncated, dtype=bool)
@@ -109,7 +109,7 @@ def train(
             b_log_probs[step] = log_prob
             b_values[step] = state_value.squeeze(-1)
 
-            obs_tensor = torch.as_tensor(next_obs_tensor, dtype=torch.float32, device=device)
+            obs_tensor = next_obs_tensor
             # Logging metrics are collected per rollout (per update), not per episode.
             rollout_rewards += reward
             rollout_max_sizes = np.maximum(rollout_max_sizes, snake_size)
@@ -209,11 +209,13 @@ def train(
 
 if __name__ == "__main__":
     env = gym.make_vec("snake-v0", num_envs=32, vectorization_mode="async")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SnakePPO(channel=4).to(device)
 
     train(
         model=model,
         env=env,
+        device=device,
         num_updates=3000,
         epochs=4,
         buffer_size=512,
