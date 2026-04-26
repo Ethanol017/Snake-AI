@@ -37,6 +37,8 @@ def train(
     clip_ppo,
     c1=0.5,
     c2=0.01,
+    c2_final=None,
+    c2_anneal_updates=None,
     clip_value_loss=True,
     save_interval=100,
     save_dir="./models/",
@@ -60,6 +62,12 @@ def train(
     num_envs = int(obs_tensor.shape[0])
     is_vector_env = hasattr(env, "num_envs")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-5)
+
+    # Entropy coefficient linear annealing config.
+    if c2_final is None:
+        c2_final = c2
+    if c2_anneal_updates is None:
+        c2_anneal_updates = num_updates
     
     update_start = 1
     if remuse and remuse_checkpoint is not None:
@@ -81,6 +89,9 @@ def train(
 
     done_count_total = 0
     for update in range(update_start, num_updates + 1):
+        anneal_progress = min(update, c2_anneal_updates) / max(c2_anneal_updates, 1)
+        current_c2 = c2 + (c2_final - c2) * anneal_progress
+
         completed_episode_rewards = []
         completed_episode_sizes = []
         rollout_done_count = 0
@@ -226,7 +237,7 @@ def train(
                     value_loss = 0.5 * F.mse_loss(current_values, mb_returns)
 
                 # Total Loss
-                loss = policy_loss + c1 * value_loss - c2 * entropy
+                loss = policy_loss + c1 * value_loss - current_c2 * entropy
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -262,6 +273,7 @@ def train(
         writer.add_scalar("rollout/snake_size_mean", snake_size_mean, update)
         writer.add_scalar("rollout/done_count", rollout_done_count, update)
         writer.add_scalar("diagnostics/explained_variance", explained_variance, update)
+        writer.add_scalar("schedule/c2", current_c2, update)
 
         print(
             f"--------------------------------------------------\n",
@@ -302,6 +314,8 @@ if __name__ == "__main__":
         clip_ppo=0.2,
         c1=0.3,
         c2=0.02,
+        c2_final=0.003,
+        c2_anneal_updates=3000,
         clip_value_loss=True,
         save_interval=100,
         save_dir="./models/",
