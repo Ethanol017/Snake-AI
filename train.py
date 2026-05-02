@@ -35,6 +35,9 @@ def train(
     gamma,
     lambda_,
     clip_ppo,
+    lr_final=None,
+    lr_anneal_start_update=1,
+    lr_anneal_end_update=None,
     c1=0.5,
     c2=0.01,
     c2_final=None,
@@ -63,6 +66,12 @@ def train(
     is_vector_env = hasattr(env, "num_envs")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-5)
 
+    # Learning-rate linear annealing config.
+    if lr_final is None:
+        lr_final = lr
+    if lr_anneal_end_update is None:
+        lr_anneal_end_update = num_updates
+
     # Entropy coefficient linear annealing config.
     if c2_final is None:
         c2_final = c2
@@ -87,8 +96,22 @@ def train(
     b_values = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=device)
     b_states = torch.zeros((buffer_size, num_envs) + obs_shape, dtype=torch.float32, device=device)
 
+    def _linear_anneal(start_value, end_value, step, start_step, end_step):
+        if end_step <= start_step:
+            return end_value
+        if step <= start_step:
+            return start_value
+        if step >= end_step:
+            return end_value
+        progress = (step - start_step) / (end_step - start_step)
+        return start_value + (end_value - start_value) * progress
+
     done_count_total = 0
     for update in range(update_start, num_updates + 1):
+        current_lr = _linear_anneal(lr,lr_final,update,lr_anneal_start_update,lr_anneal_end_update,)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = current_lr
+
         anneal_progress = min(update, c2_anneal_updates) / max(c2_anneal_updates, 1)
         current_c2 = c2 + (c2_final - c2) * anneal_progress
 
@@ -274,6 +297,7 @@ def train(
         writer.add_scalar("rollout/done_count", rollout_done_count, update)
         writer.add_scalar("diagnostics/explained_variance", explained_variance, update)
         writer.add_scalar("schedule/c2", current_c2, update)
+        writer.add_scalar("schedule/lr", current_lr, update)
 
         print(
             f"--------------------------------------------------\n",
@@ -281,6 +305,7 @@ def train(
             f"reward(mean/max) {reward_mean:7.2f}/{reward_max:7.2f} | \n",
             f"snake_size(mean) {snake_size_mean:6.2f} | \n",
             f"done {rollout_done_count:4d} | done_total {done_count_total:6d} | \n",
+            f"lr {current_lr:10.6g} | c2 {current_c2:7.5f} | ",
             f"loss(pi/v) {policy_loss_mean:8.4f}/{value_loss_mean:8.4f} | ",
             f"ev {explained_variance:7.4f} \n",
             f"--------------------------------------------------",
@@ -308,7 +333,11 @@ if __name__ == "__main__":
         epochs=4,
         buffer_size=256,
         batch_size=128,
-        gamma=0.96,
+        lr=1e-5,
+        lr_final=1e-6,
+        lr_anneal_start_update=1000,
+        lr_anneal_end_update=6000,
+        gamma=0.99,
         lambda_=0.95,
         lr=1e-4,
         clip_ppo=0.2,
