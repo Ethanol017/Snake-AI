@@ -180,7 +180,7 @@ class SnakeCore:
             self._remove_from_free(next_cell)
 
         self.board[next_y, next_x] = self.HEAD
-        
+
         reward = self.REWARD_STEP
 
         if will_eat:
@@ -222,9 +222,7 @@ class SnakeCore:
     def tail_y(self) -> int:
         return int(self._y_buffer[self.tail_idx])
 
-    def _die(
-        self, truncated: bool
-    ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, int]]:
+    def _die(self, truncated: bool) -> Tuple[np.ndarray, float, bool, bool, Dict[str, int]]:
         self.terminated = True
         self.truncated = bool(truncated)
         reward = self.REWARD_DEATH

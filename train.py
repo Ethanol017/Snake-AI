@@ -8,7 +8,6 @@ import torch.nn.functional as F
 import gym_snake  # type: ignore
 
 
-
 def _process_obs(observation, one_hot_lut, device):
     # Convert env obs to One-Hot encoding and add batch dim if needed
     obs = np.asarray(observation, dtype=np.int64)
@@ -51,6 +50,7 @@ def train(
     remuse_logdir=None,
 ):
     from torch.utils.tensorboard import SummaryWriter
+
     current_time = time.strftime("%Y%m%d_%H%M%S")
     if remuse and remuse_logdir is not None:
         log_dir = remuse_logdir
@@ -77,7 +77,7 @@ def train(
         c2_final = c2
     if c2_anneal_updates is None:
         c2_anneal_updates = num_updates
-    
+
     update_start = 1
     if remuse and remuse_checkpoint is not None:
         checkpoint = torch.load(remuse_checkpoint, map_location=device)
@@ -108,7 +108,13 @@ def train(
 
     done_count_total = 0
     for update in range(update_start, num_updates + 1):
-        current_lr = _linear_anneal(lr,lr_final,update,lr_anneal_start_update,lr_anneal_end_update,)
+        current_lr = _linear_anneal(
+            lr,
+            lr_final,
+            update,
+            lr_anneal_start_update,
+            lr_anneal_end_update,
+        )
         for param_group in optimizer.param_groups:
             param_group["lr"] = current_lr
 
@@ -157,35 +163,21 @@ def train(
             b_values[step] = state_value.squeeze(-1)
 
             obs_tensor = next_obs_tensor
-            
+
             running_episode_rewards += reward
 
             # Record metrics only when an env finishes an episode.
             done_indices = np.flatnonzero(done)
             if done_indices.size > 0:
-                completed_episode_rewards.extend(
-                    running_episode_rewards[done_indices].tolist()
-                )
-                completed_episode_sizes.extend(
-                    snake_size[done_indices].astype(np.float32).tolist()
-                )
+                completed_episode_rewards.extend(running_episode_rewards[done_indices].tolist())
+                completed_episode_sizes.extend(snake_size[done_indices].astype(np.float32).tolist())
                 running_episode_rewards[done_indices] = 0.0
                 rollout_done_count += int(done_indices.size)
 
         done_count_total += rollout_done_count
-        reward_mean = (
-            float(np.mean(completed_episode_rewards))
-            if completed_episode_rewards
-            else 0.0
-        )
-        reward_max = (
-            float(np.max(completed_episode_rewards))
-            if completed_episode_rewards
-            else 0.0
-        )
-        snake_size_mean = (
-            float(np.mean(completed_episode_sizes)) if completed_episode_sizes else 0.0
-        )
+        reward_mean = float(np.mean(completed_episode_rewards)) if completed_episode_rewards else 0.0
+        reward_max = float(np.max(completed_episode_rewards)) if completed_episode_rewards else 0.0
+        snake_size_mean = float(np.mean(completed_episode_sizes)) if completed_episode_sizes else 0.0
 
         # --train--
         # Compute advantages
@@ -198,11 +190,11 @@ def train(
         for t in reversed(range(buffer_size)):
             next_value = b_values[t + 1] if t != buffer_size - 1 else last_value
             non_terminal = 1.0 - b_dones[t]
-            
+
             delta = b_rewards[t] + gamma * next_value * non_terminal - b_values[t]
             last_adv = delta + gamma * lambda_ * non_terminal * last_adv
             b_advantages[t] = last_adv
-        
+
         b_returns = b_advantages + b_values
 
         # Flatten (T, N, ...) -> (T*N, ...)
@@ -213,9 +205,7 @@ def train(
         flat_returns = b_returns.reshape(buffer_size * num_envs)
         flat_advantages = b_advantages.reshape(buffer_size * num_envs)
 
-        flat_advantages = (flat_advantages - flat_advantages.mean()) / (
-            flat_advantages.std() + 1e-8
-        )
+        flat_advantages = (flat_advantages - flat_advantages.mean()) / (flat_advantages.std() + 1e-8)
 
         # Update epochs times
         total_batch = buffer_size * num_envs
@@ -252,7 +242,11 @@ def train(
                 # Value Loss
                 current_values = current_values.squeeze(-1)
                 if clip_value_loss:
-                    value_pred_clipped = mb_old_values + torch.clamp(current_values - mb_old_values,-clip_ppo,clip_ppo,)
+                    value_pred_clipped = mb_old_values + torch.clamp(
+                        current_values - mb_old_values,
+                        -clip_ppo,
+                        clip_ppo,
+                    )
                     value_loss_unclipped = (current_values - mb_returns).pow(2)
                     value_loss_clipped = (value_pred_clipped - mb_returns).pow(2)
                     value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
@@ -313,11 +307,14 @@ def train(
 
         if update % save_interval == 0:
             save_path = os.path.join(save_dir, f"snake_ppo_ep{update}.pth")
-            torch.save({
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "update": update
-                    }, save_path)
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "update": update,
+                },
+                save_path,
+            )
 
 
 if __name__ == "__main__":
