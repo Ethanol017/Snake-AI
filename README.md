@@ -8,7 +8,7 @@
 ### 遊戲實機遊玩
 | PPO Agent | DQN Agent |
 | :---: | :---: |
-| <video src="assets/Snake-PPO.mp4" width="400" controls></video> | <video src="assets/Snake-DQN.mp4" width="400" controls></video> |
+| <video src="https://github.com/user-attachments/assets/5e16a802-4d5b-4e68-98be-9948851003b9" controls></video> | <video src="https://github.com/user-attachments/assets/bdf30fa5-5b86-4bb7-a1fe-56534f1cac18" controls></video> |
 
 
 ### 訓練表現記錄
