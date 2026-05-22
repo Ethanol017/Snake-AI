@@ -175,9 +175,13 @@ def train_PPO(
                 rollout_done_count += int(done_indices.size)
 
         done_count_total += rollout_done_count
-        reward_mean = float(np.mean(completed_episode_rewards)) if completed_episode_rewards else 0.0
+        reward_mean = (
+            float(np.mean(completed_episode_rewards)) if completed_episode_rewards else 0.0
+        )
         reward_max = float(np.max(completed_episode_rewards)) if completed_episode_rewards else 0.0
-        snake_size_mean = float(np.mean(completed_episode_sizes)) if completed_episode_sizes else 0.0
+        snake_size_mean = (
+            float(np.mean(completed_episode_sizes)) if completed_episode_sizes else 0.0
+        )
 
         # --train--
         # Compute advantages
@@ -205,7 +209,9 @@ def train_PPO(
         flat_returns = b_returns.reshape(buffer_size * num_envs)
         flat_advantages = b_advantages.reshape(buffer_size * num_envs)
 
-        flat_advantages = (flat_advantages - flat_advantages.mean()) / (flat_advantages.std() + 1e-8)
+        flat_advantages = (flat_advantages - flat_advantages.mean()) / (
+            flat_advantages.std() + 1e-8
+        )
 
         # Update epochs times
         total_batch = buffer_size * num_envs
@@ -276,7 +282,9 @@ def train_PPO(
         values_detached = flat_old_values.detach()
         returns_var = torch.var(returns_detached)
         if float(returns_var.item()) > 1e-8:
-            explained_variance = 1.0 - torch.var(returns_detached - values_detached) / (returns_var + 1e-8)
+            explained_variance = 1.0 - torch.var(returns_detached - values_detached) / (
+                returns_var + 1e-8
+            )
             explained_variance = float(explained_variance.item())
         else:
             explained_variance = 0.0

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class SnakePPO(nn.Module):
     def __init__(self, channel=4):
         super(SnakePPO, self).__init__()
@@ -17,7 +18,7 @@ class SnakePPO(nn.Module):
         self.value_fc2 = nn.Linear(256, 256)
         self.value_fc3 = nn.Linear(256, 128)
         self.value_head = nn.Linear(128, 1)
-        
+
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
