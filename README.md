@@ -5,7 +5,7 @@
 
 ## 視覺表現
 
-### 遊戲實機遊玩
+### AI遊玩畫面
 | PPO Agent | DQN Agent |
 | :---: | :---: |
 | <video src="https://github.com/user-attachments/assets/061ab3ae-ce4d-4087-b7ce-c4cdc2310f22" controls></video> | <video src="https://github.com/user-attachments/assets/bdf30fa5-5b86-4bb7-a1fe-56534f1cac18" controls></video> |
@@ -16,7 +16,7 @@
 | :---: | :---: |
 | ![PPO Max Score](assets/PPO_Max.png) | ![DQN Max Score](assets/DQN_Max.png) |
 
-#### 模型架構參考 (PPO)
+## 模型架構參考 (PPO)
 ![PPO Architecture](assets/PPO_architecture.png)
 
 ## 安裝
