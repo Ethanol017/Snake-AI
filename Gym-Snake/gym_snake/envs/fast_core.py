@@ -27,12 +27,12 @@ class SnakeCore:
         ],
         dtype=np.int16,
     )
-    
+
     REWARD_FOOD = 15.0
-    REWARD_STEP = -0.1
+    REWARD_STEP = -0.01
     REWARD_DEATH = -10.0
     REWARD_FILLED = 100.0
-    REWARD_PBRS_GAMMA = 0.96
+    REWARD_PBRS_GAMMA = 0.99
     REWARD_PBRS_COEFF = 1.0
 
     def __init__(
@@ -192,11 +192,10 @@ class SnakeCore:
             if not spawned:
                 self.terminated = True
                 reward = self.REWARD_FILLED
-            self.prev_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
-        else:
-            current_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
-            reward += self.REWARD_PBRS_COEFF * (self.REWARD_PBRS_GAMMA * current_potential - self.prev_potential)
-            self.prev_potential = current_potential
+
+        current_potential = self._potential(self.head_x, self.head_y, self.food_x, self.food_y)
+        reward += self.REWARD_PBRS_COEFF * (self.REWARD_PBRS_GAMMA * current_potential - self.prev_potential)
+        self.prev_potential = current_potential
 
         return (
             self.board.copy(),
