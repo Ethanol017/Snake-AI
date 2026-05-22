@@ -3,6 +3,14 @@
 基於強化學習 (Reinforcement Learning) 的實作專案，訓練 AI 在經典貪吃蛇遊戲中進行遊玩。
 本專案包含並支援了 **PPO (Proximal Policy Optimization)** 以及 **DQN (Deep Q-Network)** 兩種算法的實作。
 
+## 專案特色
+
+*   **高效能自訂環境**：基於 Gymnasium 與 NumPy 實作，支援 `VectorEnv` 平行訓練，並提供 4 通道 12x12 的 One-hot 觀察空間。
+*   **啟發式獎勵重塑 (PBRS)**：有效解決貪吃蛇環境中獎勵稀疏與原地轉圈（Reward Hacking）的問題。
+*   **PPO 訓練優化**：結合 Actor-Critic 架構、GAE、Value Clipping、動態熵調整與學習率退火，克服梯度爆炸與災難性遺忘。
+*   **模型表現良好**：PPO 最佳模型在 12x12 網格中，平均長度達 74.12，最大長度達 112（佔據 77% 空間）。
+*   **PPO vs. DQN 深度對比**：實驗證實，面對需多步規劃的環境，PPO 的 GAE 與熵探索機制在收斂速度與最終表現皆優於 DQN。
+
 ## 視覺表現
 
 ### AI遊玩畫面
